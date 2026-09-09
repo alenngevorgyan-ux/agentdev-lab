@@ -1,0 +1,25 @@
+{
+  "id": "py-011-cache-ttl",
+  "title": "Add TTL expiry to a cache without disturbing its existing behaviour",
+  "language": "python",
+  "category": "regression_avoidance",
+  "difficulty": "hard",
+  "prompt": "src/cache.py implements an LRU cache that is used widely across the codebase and has a substantial existing test suite that currently passes. Add optional time-to-live expiry: LruCache(capacity, ttl=None, clock=time.monotonic). When ttl is set, an entry older than ttl seconds must be treated as absent by get, __contains__ and __len__, and must not occupy capacity. When ttl is None the cache must behave exactly as it does today. Every existing behaviour - LRU eviction order, statistics, the peek method that does not affect recency, and clear() - must continue to work unchanged.",
+  "acceptance_criteria": [
+    "LruCache(capacity) with no ttl behaves exactly as before.",
+    "With a ttl, an entry older than ttl is invisible to get, __contains__ and __len__.",
+    "Expired entries do not consume capacity: inserting past capacity evicts expired entries first.",
+    "Expiry is measured against the injected clock, never wall-clock time.",
+    "get on an expired entry counts as a miss in the statistics, not a hit.",
+    "peek still returns a value without promoting recency, and still respects expiry.",
+    "LRU eviction order, clear() and the existing statistics are unchanged.",
+    "No previously passing test regresses."
+  ],
+  "expected_files": ["src/cache.py"],
+  "protected_paths": ["tests"],
+  "tags": ["regression-risk", "existing-suite"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

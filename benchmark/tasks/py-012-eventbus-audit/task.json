@@ -1,0 +1,23 @@
+{
+  "id": "py-012-eventbus-audit",
+  "title": "Add an audit trail using the in-house event bus correctly",
+  "language": "python",
+  "category": "dependency_api",
+  "difficulty": "medium",
+  "prompt": "The codebase has its own EventBus in src/eventbus.py with specific semantics documented in its docstrings. Implement src/audit.py: an AuditLog that records every order event as a immutable record, wired to the bus through the documented subscription API. AuditLog(bus) must subscribe to 'order.created', 'order.paid' and 'order.cancelled'; expose records() returning the events in the order received; expose detach() that unsubscribes cleanly using whatever the bus's subscribe() returns; and must not raise out of a handler, because the bus documents that a raising handler is unsubscribed. Do not modify src/eventbus.py and do not reach into its private attributes - use its public API only.",
+  "acceptance_criteria": [
+    "AuditLog subscribes to exactly the three documented order topics.",
+    "records() returns received events in arrival order, as immutable snapshots.",
+    "detach() uses the token returned by subscribe() and stops further recording.",
+    "A malformed event does not raise out of the handler, so the subscription survives.",
+    "src/eventbus.py is unmodified and no private attribute of the bus is touched.",
+    "Publishing an unrelated topic records nothing."
+  ],
+  "expected_files": ["src/audit.py"],
+  "protected_paths": ["tests", "src/eventbus.py"],
+  "tags": ["in-repo-api", "pub-sub"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

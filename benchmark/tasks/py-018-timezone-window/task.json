@@ -1,0 +1,23 @@
+{
+  "id": "py-018-timezone-window",
+  "title": "Fix naive and aware datetimes colliding across two modules",
+  "language": "python",
+  "category": "bugfix_multifile",
+  "difficulty": "medium",
+  "prompt": "Scheduled jobs occasionally crash with \"can't compare offset-naive and offset-aware datetimes\", and overnight maintenance windows are evaluated incorrectly for users outside UTC. src/scheduling.py parses window definitions and src/jobs.py decides whether a job may run now. One module produces naive datetimes and the other produces aware ones. Make the whole datetime path timezone-aware in UTC: parse_window must return aware UTC datetimes, is_within_window must accept aware datetimes and reject naive ones with ValueError, and a window that crosses midnight must be handled correctly. Do not change any public function signature.",
+  "acceptance_criteria": [
+    "parse_window returns timezone-aware UTC datetimes.",
+    "is_within_window accepts aware datetimes in any timezone and compares correctly.",
+    "A naive datetime passed to is_within_window raises ValueError rather than crashing on comparison.",
+    "A window crossing midnight (for example 22:00-04:00) is evaluated correctly on both sides.",
+    "next_run_after returns an aware UTC datetime.",
+    "Public signatures are unchanged."
+  ],
+  "expected_files": ["src/scheduling.py", "src/jobs.py"],
+  "protected_paths": ["tests"],
+  "tags": ["datetime", "cross-module"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

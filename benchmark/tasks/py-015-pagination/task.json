@@ -1,0 +1,24 @@
+{
+  "id": "py-015-pagination",
+  "title": "Fix off-by-one and boundary errors in pagination",
+  "language": "python",
+  "category": "bugfix_local",
+  "difficulty": "medium",
+  "prompt": "src/pagination.py has several defects users hit at the edges: the last page sometimes omits an item, requesting a page past the end raises instead of returning an empty page, total_pages is wrong when the item count divides evenly, and an empty collection reports one page of nothing but claims zero. Fix paginate() so that pages are 1-indexed, each page holds at most per_page items, the last page holds the remainder, a page beyond the end yields an empty item list with has_next False, an empty collection reports total_pages 1 and total_items 0, and page or per_page below 1 raises ValueError. Keep the returned structure and the function signature exactly as they are.",
+  "acceptance_criteria": [
+    "Pages are 1-indexed and each holds at most per_page items.",
+    "The last page contains the remainder, with nothing dropped.",
+    "total_pages is correct when the count divides evenly and when it does not.",
+    "A page past the end returns an empty list, has_next False and has_prev True.",
+    "An empty collection reports total_pages 1, total_items 0 and an empty page.",
+    "page < 1 or per_page < 1 raises ValueError.",
+    "The returned dictionary keys and the function signature are unchanged."
+  ],
+  "expected_files": ["src/pagination.py"],
+  "protected_paths": ["tests"],
+  "tags": ["off-by-one", "boundaries"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 120
+  }
+}

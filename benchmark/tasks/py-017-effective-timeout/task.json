@@ -1,0 +1,22 @@
+{
+  "id": "py-017-effective-timeout",
+  "title": "Find which of four defaults actually decides the HTTP timeout",
+  "language": "python",
+  "category": "exploration",
+  "difficulty": "easy",
+  "prompt": "Operations wants the default HTTP client timeout raised from 5 to 30 seconds. Four modules mention a timeout default and only one of them decides the value the client actually uses. Find the one that is effective, change it there, and leave the others alone - the others are defaults for different things and changing them would alter unrelated behaviour. The client must still honour an explicitly passed timeout, and an explicit None must still mean 'no timeout'.",
+  "acceptance_criteria": [
+    "HttpClient() with no arguments uses a 30 second timeout.",
+    "An explicitly passed timeout still wins over the default.",
+    "An explicit None still means no timeout.",
+    "The retry budget, the connection pool idle timeout and the health-check interval are unchanged.",
+    "Exactly one default value was modified."
+  ],
+  "expected_files": ["src/settings.py"],
+  "protected_paths": ["tests"],
+  "tags": ["config-tracing", "blast-radius"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 120
+  }
+}

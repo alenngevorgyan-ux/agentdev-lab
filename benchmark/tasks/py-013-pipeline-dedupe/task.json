@@ -1,0 +1,22 @@
+{
+  "id": "py-013-pipeline-dedupe",
+  "title": "Track a data-loss bug through a sixteen-stage pipeline",
+  "language": "python",
+  "category": "long_context_navigation",
+  "difficulty": "hard",
+  "prompt": "Analytics reports that records are silently disappearing from the nightly ingest. The symptom: records whose 'account' field is absent or null never reach the output, even though the spec says such records must flow through and be grouped under the account key '<unassigned>'. The pipeline in src/pipeline/ has sixteen stages registered in registry.py and driven by runner.py. Find where the loss actually happens and fix it there. Several stages share helpers in src/pipeline/helpers.py - if the defect is in a shared helper, fix it once rather than patching each caller. Record counts must otherwise be unchanged.",
+  "acceptance_criteria": [
+    "Records with a missing or null 'account' reach the output grouped under '<unassigned>'.",
+    "The record count through the pipeline is otherwise unchanged.",
+    "The fix is applied once in the shared helper rather than duplicated per stage.",
+    "All sixteen stages still run in their registered order.",
+    "Existing deduplication, enrichment and aggregation behaviour is preserved."
+  ],
+  "expected_files": ["src/pipeline/helpers.py"],
+  "protected_paths": ["tests"],
+  "tags": ["large-repo", "shared-helper"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 240
+  }
+}

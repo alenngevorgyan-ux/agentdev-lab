@@ -1,0 +1,23 @@
+{
+  "id": "py-016-notification-registry",
+  "title": "Replace a growing dispatch chain with an extensible registry",
+  "language": "python",
+  "category": "refactor",
+  "difficulty": "hard",
+  "prompt": "src/notifications.py dispatches on channel type through a long if/elif chain, and src/renderer.py repeats the same chain to pick a template. Every new channel means editing both. Refactor to a registry: a channel is registered once with its sender and its template, and both modules resolve through the registry. Expose register_channel(name, sender, template) and available_channels() from src/registry.py. Behaviour must not change for the existing channels, and it must become possible to add a new channel at runtime without editing either module.",
+  "acceptance_criteria": [
+    "src/registry.py exposes register_channel and available_channels.",
+    "notifications.send and renderer.render both resolve through the registry.",
+    "Existing email, sms and push behaviour is byte-for-byte unchanged.",
+    "A channel registered at runtime is immediately usable by both send and render.",
+    "An unknown channel raises UnknownChannel from both entry points.",
+    "Neither module retains an if/elif chain over channel names."
+  ],
+  "expected_files": ["src/registry.py", "src/notifications.py", "src/renderer.py"],
+  "protected_paths": ["tests"],
+  "tags": ["extensibility", "duplication"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

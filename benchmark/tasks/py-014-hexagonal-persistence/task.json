@@ -1,0 +1,29 @@
+{
+  "id": "py-014-hexagonal-persistence",
+  "title": "Add persistence without breaking the layering rule",
+  "language": "python",
+  "category": "architectural_constraints",
+  "difficulty": "hard",
+  "prompt": "This service follows ports-and-adapters, and docs/ARCHITECTURE_RULES.md states the boundary: src/domain must not import from src/application or src/infrastructure, and src/application must not import from src/infrastructure. Dependencies point inward only, and adapters are injected. Implement order archiving: a port in the domain, an in-memory adapter in infrastructure, and an ArchiveOrderService in application that uses the port. archive_order(order_id) must load the order through the existing repository port, refuse to archive an order that is not in the 'completed' state by raising DomainError, mark it archived, and persist it through the archive port. The layering rule is enforced by a test that inspects the import graph - respect it rather than working around it.",
+  "acceptance_criteria": [
+    "An ArchivePort abstraction lives in src/domain and imports nothing from outer layers.",
+    "An in-memory archive adapter lives in src/infrastructure and implements the port.",
+    "ArchiveOrderService lives in src/application and depends on the port, not the adapter.",
+    "Archiving a non-completed order raises DomainError and persists nothing.",
+    "Archiving a completed order marks it archived and stores it via the port.",
+    "Archiving an unknown order id raises DomainError.",
+    "src/domain imports nothing from src/application or src/infrastructure.",
+    "src/application imports nothing from src/infrastructure."
+  ],
+  "expected_files": [
+    "src/domain/ports.py",
+    "src/application/archive_service.py",
+    "src/infrastructure/memory_archive.py"
+  ],
+  "protected_paths": ["tests", "docs"],
+  "tags": ["layering", "ports-and-adapters"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}
