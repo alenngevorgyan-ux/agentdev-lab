@@ -19,9 +19,9 @@ independently defensible.
 | M3 | Append-only results store | SQLite schema with constraints and triggers; full provenance on every run; reporting views. | **done** |
 | M4 | Controls + selfcheck | `noop` and `oracle` adapters; `selfcheck` asserts both polarities for every task. | **done** |
 | M5 | Seed task suite | Three deterministic Python tasks (easy/medium/hard) that self-check clean. | **done** |
-| M6 | Real agent adapter | `claude-code` adapter driving the CLI headlessly in a sandbox; end-to-end validated against the live binary. | **in progress** |
+| M6 | Real agent adapter | `claude-code` adapter driving the CLI headlessly in a sandbox; end-to-end validated against the live binary. | **blocked** — harness side done and validated; blocked on credentials (see Session 2). |
 | M7 | Baseline measurement | A multi-attempt run of `claude-code` over the full suite from a clean checkout, with integrity audit. | not started |
-| M8 | Task suite expansion | Grow to 10-15 tasks across bugfix / feature / refactor / performance, including multi-file fixtures. | not started |
+| M8 | Task suite expansion | Grow to 10-15 tasks across bugfix / feature / refactor / performance, including multi-file fixtures. | in progress — 4 of 10-15 |
 | M9 | Analysis | Per-task and per-category breakdowns, variance across attempts, failure taxonomy. | not started |
 | M10 | Write-up | Methodology and findings, with every number traceable to a `run_uid`. | not started |
 
@@ -104,3 +104,100 @@ number in this entry.
 Commit this milestone (all three authoritative suites are green), then run
 `python3 -m benchmark run --adapter claude-code --task py-001-interval-merge`
 from the clean checkout to validate M6 end to end before attempting a baseline.
+
+---
+
+## 2026-09-09 — Session 2: first real agent attempt, and the defect it exposed
+
+### What happened
+
+Ran the `claude-code` adapter end to end for the first time
+(`run_uid 33b1263267344688`, task `py-001-interval-merge`). It reported a
+`failed` attempt in 11.2 seconds. The stored agent log gave the real story:
+
+```
+Not logged in · Please run /login
+```
+
+The CLI could not authenticate as a subprocess, printed that, **and exited 0**.
+The harness therefore recorded a normal failed attempt — that is, an
+infrastructure failure recorded as a capability failure. Left alone, this is
+exactly the kind of fabricated number this project exists to prevent, and at
+scale it would have produced a confident "claude-code scores 0%".
+
+Root cause: this machine's CLI is authenticated by its host session, not by a
+credentials file or environment variable a child process can reuse. The
+sandbox's deliberately minimal environment is not at fault; no reachable
+credential exists to pass.
+
+### Fixes
+
+- `ClaudeCodeAdapter.preflight()` — refuses to measure when the binary is
+  missing or no credential is reachable, returning `agent_error` before the
+  attempt rather than a failed task afterwards.
+- `NOT_READY_SIGNATURES` — output scan for "not logged in", "invalid api key",
+  "credit balance", "rate limit" and similar, which turn a zero exit code into
+  `agent_error`.
+- New integrity check: **"every measured attempt actually changed the
+  workspace"**. Any non-control attempt whose workspace digest is unchanged is
+  flagged as not-a-measurement. Also available as
+  `sql/queries/no_change_attempts.sql`.
+- Nine new adapter tests plus two integrity tests covering both directions
+  (an inert agent attempt is flagged; the noop control legitimately is not).
+
+### Disclosure
+
+Run `33b1263267344688` remains in the local results database and **must not be
+read as a measurement of Claude Code**. It cannot be deleted — attempts are
+append-only by design — so the audit discloses it instead:
+
+```
+$ python3 -m benchmark verify-integrity
+[FAIL] every measured attempt actually changed the workspace
+         attempts recorded with no file changes -- these are not capability measurements:
+         claude-code / py-001-interval-merge #1 (33b12632)
+5/6 checks passed -- 1 FAILED
+```
+
+This is the append-only rule working as intended: a bad number gets corrected
+in public, not erased. A fresh checkout has no results database and audits
+clean.
+
+### Also built
+
+- `py-004-extract-validation` (M8): a multi-file refactor task. Two modules
+  carry drifted copies of the same validation logic; the agent must extract a
+  shared module while preserving public behaviour, including fixing the drift.
+  Self-checks clean in both directions.
+
+### Authoritative commands — actual output
+
+```
+$ python3 -m unittest discover -s tests -t . -q
+Ran 133 tests in 47.839s
+OK
+
+$ python3 -m benchmark selfcheck
+18/18 checks passed
+
+$ python3 -m benchmark verify-integrity
+5/6 checks passed -- 1 FAILED   (the disclosed row above; clean on a fresh checkout)
+```
+
+### Unfinished
+
+- M6/M7: **no valid measurement of any agent exists yet.** Unblocking requires
+  `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment running
+  the harness.
+- M8: 4 tasks of a target 10-15; still single-language (Python).
+
+### Next step
+
+Export a credential, then:
+
+```bash
+python3 -m benchmark run --adapter claude-code --task py-001-interval-merge
+```
+
+Confirm the attempt actually changes the workspace before spending a full
+multi-attempt baseline run (M7).

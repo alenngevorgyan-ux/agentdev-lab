@@ -84,6 +84,39 @@ class RecordedResultsCheckTest(TempDirTestCase):
         self.assertFalse(report.ok)
         self.assertTrue(any("fixtures stable" in check.name for check in report.checks if not check.ok))
 
+    def test_inert_agent_attempt_is_flagged(self):
+        """A non-control attempt that changed nothing is not a capability measurement."""
+        run_id, _ = self.store.start_run(
+            adapter="claude-code", adapter_version="v1", attempts_per_task=1
+        )
+        self.store.record_attempt(
+            **attempt_fields(
+                run_id=run_id,
+                status="failed",
+                passed=0,
+                workspace_hash_before="same",
+                workspace_hash_after="same",
+            )
+        )
+        report = check_recorded_results(self.store)
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any("actually changed the workspace" in c.name for c in report.checks if not c.ok)
+        )
+
+    def test_inert_control_attempt_is_not_flagged(self):
+        """The noop control legitimately changes nothing."""
+        self.store.record_attempt(
+            **attempt_fields(
+                run_id=self.run_id,
+                status="failed",
+                passed=0,
+                workspace_hash_before="same",
+                workspace_hash_after="same",
+            )
+        )
+        self.assertTrue(check_recorded_results(self.store).ok)
+
     def test_tampered_attempts_are_surfaced(self):
         self.store.record_attempt(
             **attempt_fields(run_id=self.run_id, status="tampered", passed=0, tampered=1)

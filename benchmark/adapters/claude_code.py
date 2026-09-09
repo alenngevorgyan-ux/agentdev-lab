@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from pathlib import Path
 
 from ..execution import build_env, run_command
 from ..sandbox import Sandbox
@@ -18,6 +19,21 @@ from .base import Adapter, AgentOutcome
 
 DEFAULT_BINARY = "claude"
 DEFAULT_TIMEOUT_SEC = 900
+
+#: Environment variables that can carry credentials into the sandbox.
+CREDENTIAL_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+
+#: Output signatures meaning the CLI never started work. The CLI can exit 0
+#: while printing one of these, which would otherwise be scored as the agent
+#: attempting the task and failing -- a false capability measurement.
+NOT_READY_SIGNATURES = (
+    "not logged in",
+    "please run /login",
+    "invalid api key",
+    "authentication_error",
+    "credit balance is too low",
+    "rate limit",
+)
 
 PROMPT_TEMPLATE = """\
 You are working inside an isolated benchmark workspace. Your working directory
@@ -55,6 +71,32 @@ class ClaudeCodeAdapter(Adapter):
     def available(self) -> bool:
         return shutil.which(self.binary) is not None
 
+    def preflight(self) -> str:
+        """Return why the agent cannot run, or an empty string if it can.
+
+        Checked before the attempt so an unauthenticated or missing CLI is
+        recorded as an agent error rather than as a task the agent failed.
+        """
+        if not self.available():
+            return f"claude binary not found on PATH: {self.binary!r}"
+        if any(os.environ.get(var) for var in CREDENTIAL_VARS):
+            return ""
+        if (Path.home() / ".claude" / ".credentials.json").is_file():
+            return ""
+        return (
+            "no Claude Code credentials available to a subprocess: set one of "
+            + ", ".join(CREDENTIAL_VARS)
+            + " (a host-authenticated parent session does not pass credentials to its children)"
+        )
+
+    @staticmethod
+    def _not_ready_reason(output: str) -> str:
+        lowered = output.lower()
+        for signature in NOT_READY_SIGNATURES:
+            if signature in lowered:
+                return f"agent never started work: CLI reported {signature!r}"
+        return ""
+
     def version(self) -> str:
         """Report the CLI's own version string, never a guess."""
         if self._version_cache is not None:
@@ -75,12 +117,9 @@ class ClaudeCodeAdapter(Adapter):
         )
 
     def run(self, task: Task, sandbox: Sandbox) -> AgentOutcome:
-        if not self.available():
-            return AgentOutcome(
-                completed=False,
-                duration_ms=0,
-                error=f"claude binary not found on PATH: {self.binary!r}",
-            )
+        blocked = self.preflight()
+        if blocked:
+            return AgentOutcome(completed=False, duration_ms=0, error=blocked)
 
         command = [self.binary, "--print", "--permission-mode", "bypassPermissions"]
         if self.model:
@@ -88,7 +127,7 @@ class ClaudeCodeAdapter(Adapter):
 
         env = build_env()
         # Anthropic credentials are the one secret the agent legitimately needs.
-        for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+        for key in CREDENTIAL_VARS:
             if key in os.environ:
                 env[key] = os.environ[key]
 
@@ -99,12 +138,15 @@ class ClaudeCodeAdapter(Adapter):
             env=env,
             stdin_text=self.build_prompt(task),
         )
+        error = "agent timed out" if result.timed_out else self._not_ready_reason(
+            result.stdout + "\n" + result.stderr
+        )
         return AgentOutcome(
-            completed=not result.timed_out,
+            completed=not error,
             duration_ms=result.duration_ms,
             stdout=result.stdout,
             stderr=result.stderr,
             exit_code=result.exit_code,
-            error="agent timed out" if result.timed_out else "",
+            error=error,
             metadata={"model": self.model or "default", "timeout_sec": self.timeout_sec},
         )

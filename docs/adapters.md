@@ -33,12 +33,18 @@ from the task's verification command.
    tampering, exactly like an agent that does.
 3. **Report honestly.** Return `completed=False` with an `error` when the agent
    crashed, timed out, or was misconfigured. Do not paper over a failure.
-4. **Report a real version.** `version()` must identify the actual build being
+4. **Preflight before measuring.** If the agent cannot possibly run — binary
+   missing, no credentials, quota exhausted — return `completed=False` *before*
+   the attempt. A CLI can print "Not logged in" and still exit 0; scored
+   naively that becomes a task the agent tried and failed, which is a
+   fabricated capability measurement. `ClaudeCodeAdapter.preflight()` and its
+   `NOT_READY_SIGNATURES` scan exist for exactly this.
+5. **Report a real version.** `version()` must identify the actual build being
    measured — query the binary rather than hardcoding a string. Results are
    only comparable if this is accurate.
-5. **Be bounded.** Every subprocess gets a timeout. An adapter that can hang
+6. **Be bounded.** Every subprocess gets a timeout. An adapter that can hang
    forever can stall a run.
-6. **Raising is acceptable.** The runner converts an adapter exception into
+7. **Raising is acceptable.** The runner converts an adapter exception into
    `agent_error`; it never becomes a silent skip or a harness error.
 
 ## Built-in adapters

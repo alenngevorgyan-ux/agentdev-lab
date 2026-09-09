@@ -80,7 +80,25 @@ rates while remaining visible in reports. Agent crashes and timeouts are
 `agent_error` and **are** counted — an agent that cannot finish has not solved
 the task.
 
-## 7. Controls are not competitors
+## 7. An agent that never ran was never measured
+
+**Failure it prevents:** recording an infrastructure failure as a capability
+failure.
+
+An agent CLI can fail to start and still exit 0 — printing "Not logged in",
+"Invalid API key", or a quota message. Scored naively, every task becomes a
+task the agent attempted and failed, and the resulting pass rate is fiction.
+
+Two mechanisms guard this:
+
+- Adapters preflight (binary present, credentials reachable) and scan output
+  for non-start signatures, returning `agent_error` instead of a failed task.
+- `verify-integrity` flags any non-control attempt whose workspace digest is
+  unchanged, retroactively catching rows recorded before an adapter learned to
+  detect its own failure mode. Because results are append-only, such a row
+  cannot be quietly removed — it is disclosed instead.
+
+## 8. Controls are not competitors
 
 `noop` and `oracle` bound the scale. They never appear in a claim about agent
 capability, and the leaderboard says so in print.
@@ -93,4 +111,5 @@ python3 -m benchmark verify-integrity --deep   # also re-validate every task
 ```
 
 Standalone queries live in `sql/queries/`: `tamper_report.sql`,
-`fixture_drift.sql`, `task_pass_rate.sql`, `run_summary.sql`.
+`fixture_drift.sql`, `no_change_attempts.sql`, `task_pass_rate.sql`,
+`run_summary.sql`.
