@@ -505,3 +505,30 @@ python3 -m benchmark run --adapter codex --attempts 5 \
     --experiment experiments/claude-vs-codex-v1.json
 python3 -m benchmark experiment verify experiments/claude-vs-codex-v1.json
 ```
+
+### Verification record
+
+Session 4's work is commit `05fb439efe3c64d0ac8afe028448e9a7f8f582b0`
+("Make the isolation claim structural, and the methodology frozen"), pushed to
+`origin/main`. Every command below was executed against that commit; the output
+is quoted verbatim, not summarised from memory.
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Unit + integration | `python3 -m unittest discover -s tests -t . -q` | `Ran 386 tests in 59.377s` / `OK` |
+| Task self-check | `python3 -m benchmark selfcheck --deterministic` | `92/92 checks passed` |
+| Recorded-results audit | `python3 -m benchmark verify-integrity` | `10/10 checks passed` |
+| Adversarial isolation | `python3 -m unittest tests.test_isolation -q` | `Ran 41 tests` / `OK`; canary reached `[]` |
+| SQL analyses | all files in `sql/queries/` | `25 analyses executed, 0 failed` |
+| Credential scan | every tracked file | `269 tracked files scanned; credential-shaped content in: none` |
+| Controls | `noop` / `oracle` over all 18 tasks | `0.0%` / `100.0%`, both `isolation_active = 1` |
+| Publication gate | `benchmark experiment verify` | `0/1 -- the experiment has not been run` (correct) |
+
+Clean-clone verification: a fresh `git clone` of that commit into an empty
+directory, then `./setup.sh --sample`, reproduced `Ran 386 tests ... OK`,
+`92/92`, `10/10` and `41 isolation tests OK`; executed all 25 analyses with
+non-empty results; rendered the dashboard with its synthetic-data banner; and
+wrote a CSV export. No generated artefact is tracked.
+
+The publication gate failing is the honest state, not a defect: no agent has
+been measured, so there is nothing under the frozen manifest to publish.
