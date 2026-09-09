@@ -22,6 +22,10 @@ from .config import REPO_ROOT, SCHEMA_PATH, db_path
 from .failures import TAXONOMY
 
 
+class ProtocolMismatch(RuntimeError):
+    """Raised when a results database was written by a different protocol."""
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -70,6 +74,7 @@ class ResultsStore:
         self._apply_schema()
 
     def _apply_schema(self) -> None:
+        self._assert_protocol_compatible()
         self.connection.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         self.connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES('protocol_version', ?) "
@@ -88,6 +93,33 @@ class ResultsStore:
         if not self.connection.execute("SELECT 1 FROM analysis_scope LIMIT 1").fetchone():
             self.connection.execute("INSERT INTO analysis_scope(run_kind) VALUES ('measurement')")
         self.connection.commit()
+
+    def _assert_protocol_compatible(self) -> None:
+        """Refuse a database written by a different measurement protocol.
+
+        ``CREATE TABLE IF NOT EXISTS`` silently leaves an older database
+        without the newer columns, which would surface much later as a
+        confusing SQL error -- or worse, as a run recorded with provenance
+        missing. Failing here keeps incompatible records apart.
+        """
+        tables = self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+        ).fetchone()
+        if tables is None:
+            return  # a fresh database
+        row = self.connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'protocol_version'"
+        ).fetchone()
+        if row is None:
+            return
+        stored = int(row[0])
+        if stored != HARNESS_PROTOCOL_VERSION:
+            raise ProtocolMismatch(
+                f"{self.path} was written under protocol version {stored}, but this "
+                f"harness records protocol version {HARNESS_PROTOCOL_VERSION}. Results "
+                "from different protocols are not comparable; point AGENTDEV_DB at a "
+                "new file rather than mixing them."
+            )
 
     def analysis_scope(self) -> list[str]:
         return [row["run_kind"] for row in self.query("SELECT run_kind FROM analysis_scope ORDER BY 1")]
@@ -152,6 +184,14 @@ class ResultsStore:
         attempts_per_task: int,
         agent: str = "",
         model: str = "unspecified",
+        model_resolved: str | None = None,
+        agent_flags: str = "",
+        agent_timeout_sec: int | None = None,
+        isolation_backend: str = "unknown",
+        isolation_version: str = "unknown",
+        isolation_active: bool = False,
+        publishable: bool = False,
+        network_policy: str = "unknown",
         run_kind: str = "measurement",
         label: str = "",
         notes: str = "",
@@ -163,9 +203,12 @@ class ResultsStore:
             """
             INSERT INTO runs (
                 run_uid, started_at, status, run_kind, adapter, agent, model,
+                model_resolved, agent_flags, agent_timeout_sec,
+                isolation_backend, isolation_version, isolation_active, publishable,
+                network_policy,
                 adapter_version, harness_version, protocol_version, attempts_per_task,
                 git_commit, git_dirty, python_version, platform, label, notes
-            ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_uid,
@@ -174,6 +217,14 @@ class ResultsStore:
                 adapter,
                 agent or adapter,
                 model,
+                model_resolved,
+                agent_flags,
+                agent_timeout_sec,
+                isolation_backend,
+                isolation_version,
+                1 if isolation_active else 0,
+                1 if publishable else 0,
+                network_policy,
                 adapter_version,
                 __version__,
                 HARNESS_PROTOCOL_VERSION,
@@ -217,6 +268,11 @@ class ResultsStore:
             "lines_added",
             "lines_deleted",
             "expected_files_touched",
+            "fixture_hash",
+            "isolation_active",
+            "network_policy",
+            "started_at",
+            "finished_at",
             "tool_calls",
             "num_turns",
             "cost_usd",

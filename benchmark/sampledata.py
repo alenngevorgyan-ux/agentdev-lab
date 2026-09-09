@@ -15,7 +15,7 @@ import random
 from dataclasses import dataclass
 
 from .failures import FailureCategory
-from .storage import ResultsStore
+from .storage import ResultsStore, utc_now
 from .tasks import Task, load_tasks
 
 SAMPLE_LABEL = "SYNTHETIC DEVELOPMENT DATA - NOT A MEASUREMENT"
@@ -161,6 +161,12 @@ def seed_sample_data(
             adapter_version="sample/1.0",
             attempts_per_task=attempts_per_task,
             run_kind="development_sample",
+            # Synthetic rows describe no real boundary, so they claim none.
+            isolation_backend="synthetic",
+            isolation_version="n/a",
+            isolation_active=False,
+            publishable=False,
+            network_policy="n/a",
             label=SAMPLE_LABEL,
             notes=SAMPLE_NOTES,
         )
@@ -192,6 +198,11 @@ def seed_sample_data(
                     num_turns=record["num_turns"],
                     cost_usd=record["cost_usd"],
                     human_interventions=record["human_interventions"],
+                    fixture_hash=task.spec_fingerprint(),
+                    isolation_active=0,
+                    network_policy="n/a",
+                    started_at=utc_now(),
+                    finished_at=utc_now(),
                     verify_exit_code=0 if record["passed"] else 1,
                     verify_duration_ms=int(record["total_duration_ms"] * 0.2),
                     agent_duration_ms=int(record["total_duration_ms"] * 0.8),

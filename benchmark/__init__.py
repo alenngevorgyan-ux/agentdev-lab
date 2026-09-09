@@ -5,9 +5,9 @@ package index to run is a benchmark that stops being reproducible the moment
 that index changes.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # Bumped whenever a change alters measured outcomes (sandbox semantics, scoring
 # rules, tamper detection). Results carry this value so runs produced by
 # different harness semantics are never silently compared.
-HARNESS_PROTOCOL_VERSION = 2
+HARNESS_PROTOCOL_VERSION = 3

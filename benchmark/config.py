@@ -54,6 +54,9 @@ class RunConfig:
     #: 'measurement' for real data, 'control' for harness controls,
     #: 'development_sample' for synthetic rows that must never be quoted.
     run_kind: str = "measurement"
+    #: Isolation backend request: 'auto' picks the strongest available and
+    #: refuses if none can enforce a boundary; 'none' must be asked for by name.
+    isolation: str = "auto"
 
     def __post_init__(self) -> None:
         if self.attempts < 1:

@@ -12,7 +12,7 @@ import os
 import shutil
 from pathlib import Path
 
-from ..execution import build_env, run_command
+from ..execution import run_command
 from ..sandbox import Sandbox
 from ..tasks import Task
 from .base import Adapter, AgentOutcome
@@ -54,6 +54,9 @@ Rules:
 
 class ClaudeCodeAdapter(Adapter):
     name = "claude-code"
+    #: The agent reaches the Anthropic API, so the boundary must permit egress.
+    #: This is recorded as the run's network policy rather than assumed.
+    requires_network = True
 
     def __init__(
         self,
@@ -109,6 +112,24 @@ class ClaudeCodeAdapter(Adapter):
         self._version_cache = f"claude-code/{raw[0].strip()}" if raw and result.ok else "claude-code/unknown"
         return self._version_cache
 
+    def describe_flags(self) -> tuple[str, ...]:
+        flags = ["--print", "--permission-mode", "bypassPermissions"]
+        if self.model:
+            flags += ["--model", self.model]
+        return tuple(flags)
+
+    def toolchain_paths(self) -> tuple[Path, ...]:
+        """The agent binary's install prefix, exposed read-only."""
+        located = shutil.which(self.binary)
+        if located is None:
+            return ()
+        real = Path(located).resolve()
+        return (real.parent,)
+
+    def credentials(self) -> dict[str, str]:
+        """Only the Anthropic credential, and only if the host actually has one."""
+        return {key: os.environ[key] for key in CREDENTIAL_VARS if os.environ.get(key)}
+
     def build_prompt(self, task: Task) -> str:
         return PROMPT_TEMPLATE.format(
             title=task.title,
@@ -121,21 +142,19 @@ class ClaudeCodeAdapter(Adapter):
         if blocked:
             return AgentOutcome(completed=False, duration_ms=0, error=blocked)
 
+        # `bypassPermissions` skips the CLI's own approval prompts. That is
+        # only defensible because the process is confined: inside the boundary
+        # the agent can reach nothing but its own workspace, so the prompts
+        # would be guarding a door that is already locked. The harness refuses
+        # to run an agent turn without a boundary attached (Sandbox.exec), so
+        # this flag can never act as a host-level permission bypass.
         command = [self.binary, "--print", "--permission-mode", "bypassPermissions"]
         if self.model:
             command += ["--model", self.model]
 
-        env = build_env()
-        # Anthropic credentials are the one secret the agent legitimately needs.
-        for key in CREDENTIAL_VARS:
-            if key in os.environ:
-                env[key] = os.environ[key]
-
-        result = run_command(
+        result = sandbox.exec(
             command,
-            cwd=sandbox.path,
             timeout_sec=self.timeout_sec,
-            env=env,
             stdin_text=self.build_prompt(task),
         )
         error = "agent timed out" if result.timed_out else self._not_ready_reason(

@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from .base import Adapter, AgentOutcome
+from .canary import IsolationCanaryAdapter
 from .claude_code import ClaudeCodeAdapter
 from .noop import NoopAdapter
 from .oracle import OracleAdapter
 
 #: Adapters that measure the harness itself rather than an agent under test.
-CONTROL_ADAPTERS = frozenset({"noop", "oracle"})
+CONTROL_ADAPTERS = frozenset({"noop", "oracle", "canary"})
 
 _FACTORIES = {
     NoopAdapter.name: NoopAdapter,
     OracleAdapter.name: OracleAdapter,
     ClaudeCodeAdapter.name: ClaudeCodeAdapter,
+    IsolationCanaryAdapter.name: IsolationCanaryAdapter,
 }
 
 
@@ -33,6 +35,7 @@ __all__ = [
     "Adapter",
     "AgentOutcome",
     "ClaudeCodeAdapter",
+    "IsolationCanaryAdapter",
     "NoopAdapter",
     "OracleAdapter",
     "CONTROL_ADAPTERS",

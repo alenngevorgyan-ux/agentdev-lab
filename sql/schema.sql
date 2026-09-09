@@ -1,4 +1,4 @@
--- AgentDev Lab results schema (protocol version 2).
+-- AgentDev Lab results schema (protocol version 3).
 --
 -- Design rule: the results database is an append-only laboratory notebook.
 -- Attempts are immutable once written and deletion is blocked at the database
@@ -67,8 +67,23 @@ CREATE TABLE IF NOT EXISTS runs (
                               CHECK (run_kind IN ('measurement', 'control', 'development_sample')),
     adapter           TEXT    NOT NULL,
     agent             TEXT    NOT NULL,          -- product name, e.g. 'claude-code'
-    model             TEXT    NOT NULL DEFAULT 'unspecified',
-    adapter_version   TEXT    NOT NULL,
+    -- Model identity is split so a resolved id is never confused with a
+    -- request, and neither is ever inferred. 'unspecified' means the operator
+    -- named no model; NULL in model_resolved means the agent did not report one.
+    model             TEXT    NOT NULL DEFAULT 'unspecified',  -- as requested
+    model_resolved    TEXT,                      -- as reported by the agent, else NULL
+    adapter_version   TEXT    NOT NULL,          -- exact CLI/agent build measured
+    agent_flags       TEXT    NOT NULL DEFAULT '',  -- flags the adapter passed
+    agent_timeout_sec INTEGER,                   -- per-attempt agent budget
+
+    -- Isolation provenance. A measurement is only publishable as an isolated
+    -- result when a boundary was actually enforced; this is recorded per run
+    -- rather than asserted in prose.
+    isolation_backend TEXT    NOT NULL DEFAULT 'unknown',
+    isolation_version TEXT    NOT NULL DEFAULT 'unknown',
+    isolation_active  INTEGER NOT NULL DEFAULT 0 CHECK (isolation_active IN (0, 1)),
+    publishable       INTEGER NOT NULL DEFAULT 0 CHECK (publishable IN (0, 1)),
+    network_policy    TEXT    NOT NULL DEFAULT 'unknown',
     harness_version   TEXT    NOT NULL,
     protocol_version  INTEGER NOT NULL,
     attempts_per_task INTEGER NOT NULL CHECK (attempts_per_task >= 1),
@@ -124,6 +139,13 @@ CREATE TABLE IF NOT EXISTS attempts (
     verify_duration_ms     INTEGER,
     agent_duration_ms      INTEGER NOT NULL DEFAULT 0,
     total_duration_ms      INTEGER NOT NULL DEFAULT 0,
+
+    -- provenance of this attempt specifically
+    fixture_hash           TEXT    NOT NULL DEFAULT '',  -- the exact tree handed to the agent
+    isolation_active       INTEGER NOT NULL DEFAULT 0 CHECK (isolation_active IN (0, 1)),
+    network_policy         TEXT    NOT NULL DEFAULT 'unknown',
+    started_at             TEXT    NOT NULL DEFAULT '',
+    finished_at            TEXT    NOT NULL DEFAULT '',
 
     -- integrity
     protected_hash_before  TEXT    NOT NULL,
@@ -210,6 +232,9 @@ WHEN OLD.run_id           IS NOT NEW.run_id
   OR OLD.protected_hash_after  IS NOT NEW.protected_hash_after
   OR OLD.workspace_hash_before IS NOT NEW.workspace_hash_before
   OR OLD.workspace_hash_after  IS NOT NEW.workspace_hash_after
+  OR OLD.fixture_hash          IS NOT NEW.fixture_hash
+  OR OLD.isolation_active      IS NOT NEW.isolation_active
+  OR OLD.network_policy        IS NOT NEW.network_policy
 BEGIN
     SELECT RAISE(ABORT,
         'measured fields are immutable; only failure_category, classification_source and notes may be revised');
@@ -262,6 +287,10 @@ WHEN OLD.run_uid          IS NOT NEW.run_uid
   OR OLD.git_dirty        IS NOT NEW.git_dirty
   OR OLD.python_version   IS NOT NEW.python_version
   OR OLD.platform         IS NOT NEW.platform
+  OR OLD.isolation_backend IS NOT NEW.isolation_backend
+  OR OLD.isolation_active  IS NOT NEW.isolation_active
+  OR OLD.publishable       IS NOT NEW.publishable
+  OR OLD.network_policy    IS NOT NEW.network_policy
 BEGIN
     SELECT RAISE(ABORT, 'run provenance is immutable; only finished_at/status/notes may change');
 END;
@@ -281,6 +310,10 @@ SELECT
     r.model,
     r.adapter,
     r.git_commit,
+    r.isolation_backend,
+    r.isolation_active,
+    r.publishable,
+    r.network_policy,
     a.task_id,
     t.category,
     t.difficulty,
@@ -322,8 +355,13 @@ SELECT
     r.run_kind,
     r.agent,
     r.model,
+    r.model_resolved,
     r.adapter,
     r.adapter_version,
+    r.isolation_backend,
+    r.isolation_active,
+    r.publishable,
+    r.network_policy,
     r.started_at,
     r.finished_at,
     r.status,

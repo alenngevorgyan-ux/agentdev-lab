@@ -1,5 +1,12 @@
 """Run orchestration: baseline -> agent -> hidden tests -> evaluate -> record.
 
+The agent turn and the evaluation both execute inside an isolation boundary
+(``benchmark.isolation``). The agent gets network access only if its adapter
+declares it needs it; evaluation never does, because a task whose result
+depends on the network is not deterministic. Hidden acceptance tests are
+applied by the host *between* those two boundaries, so they are absent from the
+filesystem the agent saw.
+
 The order of operations is the experiment's protocol and is deliberately rigid:
 
 1.  Materialise a fresh sandbox from the pinned fixture.
@@ -25,11 +32,19 @@ from .adapters import get_adapter
 from .adapters.base import Adapter, AgentOutcome
 from .config import RunConfig
 from .diffstats import DiffStats, compute_diff
-from .execution import CommandResult, run_command
+from .execution import CommandResult
 from .failures import FailureCategory, FailureEvidence, classify
+from .isolation import (
+    NETWORK_ALLOWED,
+    IsolationBackend,
+    IsolationReport,
+    IsolationUnavailable,
+    SessionSpec,
+    select_backend,
+)
 from .sandbox import Sandbox, create_sandbox
 from .scoring import Score, Status, score_attempt
-from .storage import ResultsStore
+from .storage import ResultsStore, utc_now
 from .tasks import Task, select_tasks
 from .testparse import SuiteResult, parse_unittest_output
 
@@ -68,6 +83,11 @@ class AttemptResult:
     workspace_hash_before: str = UNAVAILABLE
     workspace_hash_after: str = UNAVAILABLE
     baseline_output: str = ""
+    isolation: IsolationReport | None = None
+    #: Digest of the exact tree handed to the agent, before any hidden test.
+    fixture_hash: str = ""
+    started_at: str = ""
+    finished_at: str = ""
     sandbox_path: Path | None = None
 
     @property
@@ -118,9 +138,17 @@ class RunResult:
 ProgressHook = Callable[[AttemptResult], None]
 
 
-def evaluate(path: Path, task: Task) -> tuple[CommandResult, SuiteResult]:
-    """Run a task's acceptance command in ``path`` and parse per-test outcomes."""
-    result = run_command(task.verify.command, cwd=path, timeout_sec=task.verify.timeout_sec)
+def evaluate(
+    path: Path, task: Task, backend: IsolationBackend
+) -> tuple[CommandResult, SuiteResult]:
+    """Run a task's acceptance command in ``path`` and parse per-test outcomes.
+
+    Evaluation runs inside the boundary with the network denied: the verdict
+    must depend on the workspace and nothing else. It is also the host's
+    verdict, never the agent's -- the agent has already exited by this point.
+    """
+    with backend.session(SessionSpec(workspace=path, network=False)) as session:
+        result = session.run(task.verify.command, timeout_sec=task.verify.timeout_sec)
     # unittest writes its per-test lines to stderr; other runners use stdout.
     suite = parse_unittest_output(result.stdout + "\n" + result.stderr)
     return result, suite
@@ -134,7 +162,11 @@ def _prepare_evaluation(sandbox: Sandbox, task: Task) -> list[str]:
 
 
 def measure_baseline(
-    task: Task, *, sandbox_root: Path | None = None, use_cache: bool = True
+    task: Task,
+    *,
+    sandbox_root: Path | None = None,
+    use_cache: bool = True,
+    backend: IsolationBackend | None = None,
 ) -> tuple[SuiteResult, str]:
     """Evaluate the untouched fixture to learn which tests passed beforehand.
 
@@ -145,9 +177,10 @@ def measure_baseline(
     if use_cache and key in _BASELINE_CACHE:
         return _BASELINE_CACHE[key]
 
+    resolved = backend or select_backend()
     with create_sandbox(task, root=sandbox_root) as pristine:
         _prepare_evaluation(pristine, task)
-        result, suite = evaluate(pristine.path, task)
+        result, suite = evaluate(pristine.path, task, resolved)
     baseline = (suite, result.stdout + "\n" + result.stderr)
     if use_cache:
         _BASELINE_CACHE[key] = baseline
@@ -163,24 +196,45 @@ def run_attempt(
     sandbox_root: Path | None = None,
     baseline: SuiteResult | None = None,
     baseline_output: str = "",
+    backend: IsolationBackend | None = None,
 ) -> AttemptResult:
     """Execute a single attempt end to end. Never raises for agent failures."""
     started = time.monotonic()
+    started_at = utc_now()
     sandbox = None
+    resolved = backend or select_backend()
+    isolation = resolved.probe()
     try:
         if baseline is None:
-            baseline, baseline_output = measure_baseline(task, sandbox_root=sandbox_root)
+            baseline, baseline_output = measure_baseline(
+                task, sandbox_root=sandbox_root, backend=resolved
+            )
 
         sandbox = create_sandbox(task, keep=keep_sandbox, root=sandbox_root)
         protected_before = sandbox.snapshot_protected()
         workspace_before = sandbox.snapshot_tree()
 
+        # The agent's turn happens inside the boundary. Controls act host-side
+        # -- they are part of the apparatus -- and the record says so rather
+        # than claiming an isolation property they never exercised.
+        spec = SessionSpec(
+            workspace=sandbox.path,
+            network=adapter.requires_network,
+            secrets=adapter.credentials(),
+            toolchain_paths=adapter.toolchain_paths(),
+        )
         try:
-            agent = adapter.run(task, sandbox)
-        except Exception as exc:  # an adapter crash is an agent error, not ours
-            agent = AgentOutcome(
-                completed=False, duration_ms=0, error=f"{type(exc).__name__}: {exc}"
-            )
+            with resolved.session(spec) as session:
+                sandbox.session = session
+                isolation = session.report
+                try:
+                    agent = adapter.run(task, sandbox)
+                except Exception as exc:  # an adapter crash is an agent error
+                    agent = AgentOutcome(
+                        completed=False, duration_ms=0, error=f"{type(exc).__name__}: {exc}"
+                    )
+        finally:
+            sandbox.session = None
 
         protected_after = sandbox.snapshot_protected()
         workspace_after = sandbox.snapshot_tree()
@@ -193,8 +247,9 @@ def run_attempt(
         regressions: tuple[str, ...] = ()
         # A tampered or broken attempt yields no measurement worth taking.
         if agent.completed and protected_before == protected_after:
+            # Hidden tests land only now, after the agent has exited.
             _prepare_evaluation(sandbox, task)
-            verification, suite = evaluate(sandbox.path, task)
+            verification, suite = evaluate(sandbox.path, task, resolved)
             regressions = tuple(sorted(baseline.satisfied_ids() - suite.satisfied_ids()))
 
         score = score_attempt(
@@ -221,6 +276,10 @@ def run_attempt(
             workspace_hash_before=workspace_before,
             workspace_hash_after=workspace_after,
             baseline_output=baseline_output,
+            isolation=isolation,
+            fixture_hash=workspace_before,
+            started_at=started_at,
+            finished_at=utc_now(),
             sandbox_path=sandbox.path if keep_sandbox else None,
         )
         result.failure_category = classify(_evidence(task, result))
@@ -239,6 +298,9 @@ def run_attempt(
             verification=None,
             total_duration_ms=int((time.monotonic() - started) * 1000),
             failure_category=FailureCategory.ENVIRONMENT_FAILURE,
+            isolation=isolation,
+            started_at=started_at,
+            finished_at=utc_now(),
         )
     finally:
         if sandbox is not None:
@@ -270,6 +332,7 @@ def _evidence(task: Task, result: AttemptResult) -> FailureEvidence:
 
 
 def _persist(store: ResultsStore, run_id: int, task: Task, result: AttemptResult) -> None:
+    isolation = result.isolation
     baseline_ids = result.baseline.satisfied_ids() if result.baseline else frozenset()
     hidden_ids = _hidden_test_ids(task)
 
@@ -292,6 +355,11 @@ def _persist(store: ResultsStore, run_id: int, task: Task, result: AttemptResult
         lines_added=result.diff.lines_added,
         lines_deleted=result.diff.lines_deleted,
         expected_files_touched=result.diff.touched(task.expected_files),
+        fixture_hash=result.fixture_hash,
+        isolation_active=1 if (isolation and isolation.active) else 0,
+        network_policy=isolation.network_policy if isolation else "unknown",
+        started_at=result.started_at,
+        finished_at=result.finished_at,
         tool_calls=result.agent.metadata.get("tool_calls"),
         num_turns=result.agent.metadata.get("num_turns"),
         cost_usd=result.agent.metadata.get("cost_usd"),
@@ -356,11 +424,27 @@ def execute_run(
     if not selected:
         raise ValueError("no tasks selected")
 
+    backend = select_backend(config.isolation)
+    isolation = backend.probe()
+    # A control never enters the boundary, so it is never marked publishable as
+    # an isolated agent measurement, however strong the backend happens to be.
+    publishable = bool(isolation.publishable and not adapter.is_control)
+
     store.register_tasks(selected)
     run_id, run_uid = store.start_run(
         adapter=adapter.name,
         agent=config.agent or adapter.name,
         model=config.model or "unspecified",
+        model_resolved=None,
+        agent_flags=" ".join(adapter.describe_flags()),
+        agent_timeout_sec=getattr(adapter, "timeout_sec", None),
+        isolation_backend=isolation.backend,
+        isolation_version=isolation.version,
+        isolation_active=isolation.active,
+        publishable=publishable,
+        network_policy=(
+            NETWORK_ALLOWED if adapter.requires_network else isolation.network_policy
+        ),
         adapter_version=adapter.version(),
         attempts_per_task=config.attempts,
         run_kind=config.run_kind,
@@ -374,7 +458,7 @@ def execute_run(
         for task in selected:
             # Measured once per task per run: the fixture is identical for every
             # attempt, so re-measuring it would only add noise and cost.
-            baseline, baseline_output = measure_baseline(task)
+            baseline, baseline_output = measure_baseline(task, backend=backend)
             for index in range(1, config.attempts + 1):
                 result = run_attempt(
                     task,
@@ -383,6 +467,7 @@ def execute_run(
                     keep_sandbox=config.keep_sandboxes,
                     baseline=baseline,
                     baseline_output=baseline_output,
+                    backend=backend,
                 )
                 _persist(store, run_id, task, result)
                 results.append(result)

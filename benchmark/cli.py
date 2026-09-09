@@ -13,9 +13,11 @@ from .config import RunConfig, db_path
 from .dashboard import build_page, serve
 from .export import export_csv, export_json
 from .integrity import check_recorded_results, selfcheck
+from .isolation import IsolationUnavailable, available_backends, probe_all
 from .queries import find_query, load_queries, run_query
 from .report import leaderboard, render_table, run_report, run_report_json
 from .sampledata import SAMPLE_LABEL, seed_sample_data
+from .isolation import select_backend
 from .runner import AttemptResult, execute_run
 from .scoring import Status
 from .storage import ResultsStore
@@ -29,6 +31,13 @@ SCOPES = {
     "control": ["control"],
     "all": ["measurement", "control", "development_sample"],
 }
+
+#: Printed whenever a run cannot be published as an isolated measurement.
+NON_PUBLISHABLE_BANNER = (
+    "NON-PUBLISHABLE: no enforced isolation boundary. The agent runs with host "
+    "privileges, so no claim may be made that hidden tests, reference solutions "
+    "or the results database were unreachable."
+)
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -118,6 +127,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         agent=args.agent,
         model=args.model,
         run_kind="control" if args.adapter in CONTROL_ADAPTERS else "measurement",
+        isolation=args.isolation,
     )
     try:
         tasks = select_tasks(config.task_ids)
@@ -133,10 +143,23 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("error: no tasks match the given filters", file=sys.stderr)
         return EXIT_USAGE
 
+    try:
+        backend = select_backend(config.isolation)
+    except IsolationUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_FAILURE
+    isolation = backend.probe()
+
     print(
         f"running {len(tasks)} task(s) x {config.attempts} attempt(s) "
         f"with adapter '{config.adapter}'"
     )
+    print(
+        f"isolation: {isolation.backend} ({isolation.version}) "
+        f"active={isolation.active} network={'allowed' if get_adapter(config.adapter).requires_network else isolation.network_policy}"
+    )
+    if not isolation.publishable:
+        print(f"\n!! {NON_PUBLISHABLE_BANNER}\n")
     with ResultsStore(args.db) as store:
         result = execute_run(config, store, tasks=tasks, on_attempt=_print_attempt)
         print()
@@ -152,6 +175,26 @@ def cmd_run(args: argparse.Namespace) -> int:
         return EXIT_FAILURE
     if rate is not None:
         print(f"pass rate: {rate * 100:.1f}%")
+    return EXIT_OK
+
+
+def cmd_isolation(_: argparse.Namespace) -> int:
+    rows = [
+        [
+            report.backend,
+            "yes" if report.active else "no",
+            "yes" if report.publishable else "no",
+            report.version,
+            report.network_policy,
+            (report.unavailable_reason or report.detail)[:64],
+        ]
+        for report in probe_all()
+    ]
+    print(render_table(["backend", "active", "publishable", "version", "network", "detail"], rows))
+    print(
+        "\n'auto' selects the strongest active backend and refuses to run when none is "
+        "available.\nRuns made without an enforced boundary are recorded as NON-PUBLISHABLE."
+    )
     return EXIT_OK
 
 
@@ -309,6 +352,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--task", action="append", default=[], help="task id (repeatable; default: all)")
     p_run.add_argument("--attempts", type=int, default=1, help="attempts per task (default: 1)")
     p_run.add_argument("--keep-sandboxes", action="store_true", help="do not delete sandboxes")
+    p_run.add_argument(
+        "--isolation",
+        default="auto",
+        choices=available_backends(),
+        help="isolation backend ('auto' refuses if none can enforce a boundary; "
+        "'none' records the run as NON-PUBLISHABLE)",
+    )
     p_run.add_argument("--agent", default="", help="agent product name (default: adapter name)")
     p_run.add_argument("--model", default="", help="model identifier under test")
     p_run.add_argument("--category", action="append", default=[], help="filter tasks by category")
@@ -317,6 +367,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--notes", default="", help="free-text notes stored with the run")
     p_run.add_argument("--db", type=Path, default=None, help="results database path")
     p_run.set_defaults(func=cmd_run)
+
+    p_iso = sub.add_parser("isolation", help="report which isolation backends work here")
+    p_iso.set_defaults(func=cmd_isolation)
 
     p_self = sub.add_parser(
         "selfcheck", help="validate every task with the noop and oracle controls"

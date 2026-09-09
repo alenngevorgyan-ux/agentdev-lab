@@ -14,6 +14,7 @@ from .base import Adapter, AgentOutcome
 
 class NoopAdapter(Adapter):
     name = "noop"
+    is_control = True
 
     def version(self) -> str:
         return f"agentdev-noop/{__version__}"

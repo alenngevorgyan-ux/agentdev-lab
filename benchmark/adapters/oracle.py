@@ -20,6 +20,7 @@ from .base import Adapter, AgentOutcome
 
 class OracleAdapter(Adapter):
     name = "oracle"
+    is_control = True
 
     def version(self) -> str:
         return f"agentdev-oracle/{__version__}"

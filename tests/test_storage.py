@@ -44,6 +44,11 @@ def attempt_fields(**overrides):
         "num_turns": None,
         "cost_usd": None,
         "human_interventions": 0,
+        "fixture_hash": "fixture-abc",
+        "isolation_active": 1,
+        "network_policy": "denied",
+        "started_at": "2026-09-09T00:00:00+00:00",
+        "finished_at": "2026-09-09T00:00:01+00:00",
         "notes": "",
         "verify_exit_code": 0,
         "verify_duration_ms": 5,
@@ -237,3 +242,36 @@ class TimestampTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProtocolGuardTest(TempDirTestCase):
+    """A database from another protocol must be refused, not silently reused."""
+
+    def test_mismatched_protocol_is_rejected(self):
+        import sqlite3
+
+        from benchmark.storage import ProtocolMismatch
+
+        path = self.tmp / "old.sqlite3"
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            "CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+            "INSERT INTO schema_meta VALUES('protocol_version','1');"
+        )
+        connection.commit()
+        connection.close()
+        with self.assertRaises(ProtocolMismatch):
+            ResultsStore(path)
+
+    def test_current_protocol_is_recorded(self):
+        from benchmark import HARNESS_PROTOCOL_VERSION
+
+        store = ResultsStore(self.tmp / "fresh.sqlite3")
+        self.addCleanup(store.close)
+        value = store.query("SELECT value FROM schema_meta WHERE key='protocol_version'")[0]["value"]
+        self.assertEqual(int(value), HARNESS_PROTOCOL_VERSION)
+
+    def test_reopening_a_current_database_is_fine(self):
+        path = self.tmp / "ok.sqlite3"
+        ResultsStore(path).close()
+        ResultsStore(path).close()
