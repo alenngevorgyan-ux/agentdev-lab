@@ -388,15 +388,17 @@ def verify_experiment(store: ResultsStore, experiment) -> CheckReport:
     counts: dict[tuple[str, str], int] = {}
     for row in rows:
         counts[(row["agent"], row["task_id"])] = counts.get((row["agent"], row["task_id"]), 0) + 1
-    uneven = {agent for (agent, _), _ in counts.items()} and {
+    # Running one agent more often than another on the same task is a
+    # cherry-picking vector, so any deviation from the manifest is named.
+    uneven = sorted(
         f"{agent}/{task}={count}"
         for (agent, task), count in counts.items()
         if count != experiment.attempts_per_task
-    }
+    )
     report.add(
         "attempts per task match the manifest",
         not uneven,
-        "" if not uneven else f"uneven attempt counts: {sorted(uneven)[:8]}",
+        "" if not uneven else f"uneven attempt counts: {uneven[:8]}",
     )
 
     samples = [r for r in rows if r["run_kind"] == "development_sample"]

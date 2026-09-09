@@ -33,7 +33,7 @@ not leak.
 
 | Backend | Status here | Boundary |
 | --- | --- | --- |
-| `docker` | implemented; **unavailable on the authoring machine** (CLI present, no daemon) | container; only the workspace is bind-mounted, all capabilities dropped, `no-new-privileges`, `--network none` unless requested |
+| `docker` | implemented; **unavailable on the authoring machine** (CLI present, no daemon). Its argv is asserted by tests even though it could not be executed here. | container; only the workspace is bind-mounted, all capabilities dropped, `no-new-privileges`, `--network none` unless requested |
 | `seatbelt` | **active and used for every measurement in this repository** | macOS kernel policy, deny-by-default, via `sandbox-exec` |
 | `none` | never automatic | no boundary; marks runs NON-PUBLISHABLE |
 
@@ -114,6 +114,14 @@ python3 -m unittest tests.test_isolation -v
 
 Every probe must be denied, and the tracked file must be byte-identical
 afterwards. If any probe succeeds, the suite fails with `ISOLATION BREACH`.
+
+## What is proven, and what is only reviewed
+
+| Claim | Basis |
+| --- | --- |
+| Seatbelt denies every probe listed above | executed on this machine, asserted by the suite on every run |
+| Evaluation cannot be hijacked by a planted module | executed: a forged `unittest.py` fails to be imported, and is recorded as tampering |
+| Docker would confine the agent as described | **not executed** -- no daemon was reachable. Only the command it constructs is asserted (`--rm`, `--network none`, `--cap-drop ALL`, `no-new-privileges`, a single workspace bind mount, secrets passed by name rather than value). Treat container isolation as reviewed, not verified. |
 
 ## What this is not
 

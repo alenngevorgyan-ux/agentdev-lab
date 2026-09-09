@@ -291,3 +291,77 @@ class ToolchainExposureTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DockerCommandTest(unittest.TestCase):
+    """Docker cannot be exercised on every machine, so its argv is asserted.
+
+    The backend reports itself unavailable without a daemon and the harness
+    then refuses to claim isolation, but the command it *would* run must still
+    be reviewable rather than untested.
+    """
+
+    def setUp(self):
+        from benchmark.isolation.docker import CONTAINER_WORKSPACE, DockerSession
+
+        self.mount = CONTAINER_WORKSPACE
+        report = DockerBackend().probe()
+        self.session = DockerSession(
+            SessionSpec(workspace=Path("/tmp"), network=False, secrets={"OPENAI_API_KEY": "x"}),
+            report,
+            image="python:3.12-slim",
+            binary="docker",
+        )
+
+    def _argv(self, network: bool):
+        from benchmark.isolation.docker import DockerSession
+
+        session = DockerSession(
+            SessionSpec(workspace=Path("/tmp"), network=network),
+            DockerBackend().probe(),
+            image="python:3.12-slim",
+            binary="docker",
+        )
+        return session._docker_command(["python3", "-c", "pass"], None)
+
+    def test_container_is_removed_after_the_attempt(self):
+        self.assertIn("--rm", self._argv(False))
+
+    def test_network_is_disabled_unless_requested(self):
+        argv = self._argv(False)
+        self.assertEqual(argv[argv.index("--network") + 1], "none")
+        argv = self._argv(True)
+        self.assertEqual(argv[argv.index("--network") + 1], "bridge")
+
+    def test_all_capabilities_are_dropped(self):
+        argv = self._argv(False)
+        self.assertEqual(argv[argv.index("--cap-drop") + 1], "ALL")
+
+    def test_privilege_escalation_is_blocked(self):
+        argv = self._argv(False)
+        self.assertEqual(argv[argv.index("--security-opt") + 1], "no-new-privileges")
+
+    def test_only_the_workspace_is_mounted(self):
+        argv = self._argv(False)
+        mounts = [argv[i + 1] for i, part in enumerate(argv) if part == "--volume"]
+        self.assertEqual(len(mounts), 1)
+        self.assertTrue(mounts[0].endswith(f"{self.mount}:rw"))
+
+    def test_home_points_inside_the_container(self):
+        argv = self._argv(False)
+        self.assertIn(f"HOME={self.mount}", argv)
+
+    def test_secret_values_never_reach_the_command_line(self):
+        """`--env NAME` passes the value through the environment, not argv."""
+        argv = self.session._docker_command(["python3"], None)
+        self.assertIn("OPENAI_API_KEY", argv)
+        self.assertNotIn("x", [part for part in argv if part == "x"])
+
+    def test_working_directory_is_the_mount_point(self):
+        argv = self._argv(False)
+        self.assertEqual(argv[argv.index("--workdir") + 1], self.mount)
+
+    def test_the_command_is_appended_after_the_image(self):
+        argv = self._argv(False)
+        self.assertEqual(argv[-3:], ["python3", "-c", "pass"])
+        self.assertEqual(argv[-4], "python:3.12-slim")
