@@ -5,6 +5,21 @@ from benchmark.storage import ResultsStore, utc_now
 from tests.helpers import TempDirTestCase
 
 
+class FakeTask:
+    """Minimal stand-in for a Task, enough for `register_tasks`."""
+
+    def __init__(self, task_id="demo-task"):
+        self.id = task_id
+        self.title = "Demo task"
+        self.category = "bugfix_local"
+        self.difficulty = "easy"
+        self.language = "python"
+        self.expected_files = ("src/thing.py",)
+        self.tags = ()
+        self.has_hidden_tests = False
+        self.verify = type("V", (), {"timeout_sec": 60})()
+
+
 def attempt_fields(**overrides):
     fields = {
         "run_id": 1,
@@ -14,7 +29,22 @@ def attempt_fields(**overrides):
         "status": "passed",
         "passed": 1,
         "tampered": 0,
+        "failure_category": "none",
+        "classification_source": "auto",
         "reason": "ok",
+        "tests_total": 5,
+        "tests_passed": 5,
+        "baseline_passed": 2,
+        "regressions": 0,
+        "files_changed": 1,
+        "lines_added": 4,
+        "lines_deleted": 3,
+        "expected_files_touched": 1,
+        "tool_calls": None,
+        "num_turns": None,
+        "cost_usd": None,
+        "human_interventions": 0,
+        "notes": "",
         "verify_exit_code": 0,
         "verify_duration_ms": 5,
         "agent_duration_ms": 1,
@@ -33,8 +63,10 @@ class StorageTest(TempDirTestCase):
         super().setUp()
         self.store = ResultsStore(self.tmp / "results.sqlite3")
         self.addCleanup(self.store.close)
+        self.store.register_tasks([FakeTask()])
         self.run_id, self.run_uid = self.store.start_run(
-            adapter="noop", adapter_version="v1", attempts_per_task=1
+            adapter="noop", agent="noop", adapter_version="v1", attempts_per_task=1,
+            run_kind="control",
         )
 
     def test_schema_is_created(self):
@@ -77,6 +109,31 @@ class StorageTest(TempDirTestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.store.record_attempt(**attempt_fields(run_id=self.run_id))
 
+    def test_pass_with_a_regression_is_rejected(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.record_attempt(**attempt_fields(run_id=self.run_id, regressions=1))
+
+    def test_more_passing_than_total_is_rejected(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.record_attempt(
+                **attempt_fields(run_id=self.run_id, tests_total=3, tests_passed=4)
+            )
+
+    def test_per_test_results_are_stored(self):
+        attempt_id = self.store.record_attempt(**attempt_fields(run_id=self.run_id))
+        self.store.record_tests(
+            attempt_id, [("t.a", "passed", 1, 0), ("t.b", "failed", 0, 1)]
+        )
+        rows = self.store.query(
+            "SELECT * FROM attempt_tests WHERE attempt_id = ? ORDER BY test_id", (attempt_id,)
+        )
+        self.assertEqual([row["outcome"] for row in rows], ["passed", "failed"])
+        self.assertEqual(rows[1]["is_hidden"], 1)
+
+    def test_taxonomy_is_seeded(self):
+        rows = self.store.query("SELECT COUNT(*) AS n FROM failure_categories")
+        self.assertGreater(rows[0]["n"], 10)
+
     def test_passed_and_tampered_cannot_coexist(self):
         with self.assertRaises(sqlite3.IntegrityError):
             self.store.record_attempt(
@@ -108,18 +165,39 @@ class AppendOnlyTest(TempDirTestCase):
         super().setUp()
         self.store = ResultsStore(self.tmp / "results.sqlite3")
         self.addCleanup(self.store.close)
+        self.store.register_tasks([FakeTask()])
         self.run_id, self.run_uid = self.store.start_run(
-            adapter="noop", adapter_version="v1", attempts_per_task=1
+            adapter="noop", agent="noop", adapter_version="v1", attempts_per_task=1,
+            run_kind="control",
         )
         self.attempt_id = self.store.record_attempt(
             **attempt_fields(run_id=self.run_id, status="failed", passed=0)
         )
 
-    def test_attempts_cannot_be_updated(self):
+    def test_measured_fields_cannot_be_updated(self):
         with self.assertRaises(sqlite3.IntegrityError):
             self.store.connection.execute(
                 "UPDATE attempts SET passed = 1, status = 'passed' WHERE id = ?", (self.attempt_id,)
             )
+
+    def test_human_relabelling_is_allowed_and_attributed(self):
+        """Relabelling a failure after review is research; rewriting a measurement is not."""
+        self.store.relabel_failure(self.attempt_id, "misunderstood_requirement", "reviewed")
+        row = self.store.query("SELECT * FROM attempts WHERE id = ?", (self.attempt_id,))[0]
+        self.assertEqual(row["failure_category"], "misunderstood_requirement")
+        self.assertEqual(row["classification_source"], "human")
+
+    def test_relabelling_without_attribution_is_rejected(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.connection.execute(
+                "UPDATE attempts SET failure_category = 'regression' WHERE id = ?",
+                (self.attempt_id,),
+            )
+
+    def test_per_test_rows_are_immutable(self):
+        self.store.record_tests(self.attempt_id, [("t.a", "passed", 1, 0)])
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.connection.execute("UPDATE attempt_tests SET outcome = 'failed'")
 
     def test_attempts_cannot_be_deleted(self):
         with self.assertRaises(sqlite3.IntegrityError):

@@ -3,6 +3,7 @@ import unittest
 from benchmark.adapters.base import AgentOutcome
 from benchmark.execution import TIMEOUT_EXIT_CODE, CommandResult
 from benchmark.scoring import Score, Status, score_attempt
+from benchmark.testparse import SuiteResult, TestOutcome, TestResult
 
 
 def verification(exit_code=0, timed_out=False):
@@ -20,10 +21,18 @@ def agent(completed=True, error=""):
     return AgentOutcome(completed=completed, duration_ms=1, error=error)
 
 
+def suite(passed=2, failed=0):
+    tests = [TestResult(f"t.p{i}", TestOutcome.PASSED) for i in range(passed)]
+    tests += [TestResult(f"t.f{i}", TestOutcome.FAILED) for i in range(failed)]
+    return SuiteResult(tests=tuple(tests), reported_total=passed + failed)
+
+
 def score(**kwargs):
     defaults = {
         "agent": agent(),
         "verification": verification(),
+        "suite": suite(),
+        "regressions": 0,
         "protected_before": "h",
         "protected_after": "h",
     }
@@ -49,6 +58,16 @@ class ScoreAttemptTest(unittest.TestCase):
         result = score(agent=agent(completed=False, error="crashed"), verification=None)
         self.assertIs(result.status, Status.AGENT_ERROR)
         self.assertIn("crashed", result.reason)
+
+    def test_regression_demotes_a_green_suite(self):
+        """Breaking working behaviour is not success, whatever the exit code says."""
+        result = score(verification=verification(exit_code=0), regressions=2)
+        self.assertIs(result.status, Status.FAILED)
+        self.assertIn("regression", result.reason)
+
+    def test_uncollectable_suite_fails(self):
+        broken = SuiteResult(tests=(), reported_total=None, collection_error=True)
+        self.assertIs(score(suite=broken).status, Status.FAILED)
 
     def test_missing_verification_is_a_harness_error(self):
         self.assertIs(score(verification=None).status, Status.HARNESS_ERROR)

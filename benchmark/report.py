@@ -42,7 +42,9 @@ def run_report(store: ResultsStore, run_uid: str) -> str:
     attempts = store.attempts_for_run(run_uid)
     header = [
         f"run        {summary['run_uid']}",
-        f"adapter    {summary['adapter']} ({summary['adapter_version']})",
+        f"agent      {summary['agent']} / {summary['model']} "
+        f"[{summary['adapter']} {summary['adapter_version']}]",
+        f"run kind   {summary['run_kind']}",
         f"started    {summary['started_at']}",
         f"finished   {summary['finished_at'] or '-'} [{summary['status']}]",
         f"attempts   {summary['attempts']} scored={summary['scored_attempts']} "
@@ -56,42 +58,50 @@ def run_report(store: ResultsStore, run_uid: str) -> str:
             str(row["task_id"]),
             str(row["attempt_index"]),
             str(row["status"]),
-            "-" if row["verify_exit_code"] is None else str(row["verify_exit_code"]),
+            f"{row['tests_passed']}/{row['tests_total']}" if row["tests_total"] else "-",
+            str(row["regressions"]),
+            f"{row['files_changed']}f +{row['lines_added']}/-{row['lines_deleted']}",
+            str(row["failure_category"]),
             f"{(row['total_duration_ms'] or 0) / 1000:.1f}s",
-            (row["reason"] or "")[:60],
         ]
         for row in attempts
     ]
-    table = render_table(["task", "#", "status", "exit", "time", "reason"], rows)
+    table = render_table(
+        ["task", "#", "status", "tests", "regr", "diff", "failure", "time"], rows
+    )
     return "\n".join(header) + table
 
 
 def leaderboard(store: ResultsStore) -> str:
     rows = store.query(
         """
-        SELECT r.adapter,
-               COUNT(*)                                          AS attempts,
-               SUM(a.passed)                                     AS passed,
-               SUM(a.tampered)                                    AS tampered,
-               ROUND(CAST(SUM(a.passed) AS REAL) / COUNT(*), 4)  AS pass_rate,
-               ROUND(AVG(a.total_duration_ms) / 1000.0, 2)       AS avg_seconds
-        FROM attempts a
-        JOIN runs r ON r.id = a.run_id
-        WHERE a.status != 'harness_error'
-        GROUP BY r.adapter
-        ORDER BY pass_rate DESC, r.adapter
+        SELECT agent,
+               model,
+               run_kind,
+               COUNT(*)                                        AS attempts,
+               SUM(passed)                                     AS passed,
+               SUM(tampered)                                   AS tampered,
+               SUM(regressions > 0)                            AS regressed,
+               ROUND(CAST(SUM(passed) AS REAL) / COUNT(*), 4)  AS pass_rate,
+               ROUND(AVG(total_seconds), 2)                    AS avg_seconds
+        FROM v_attempt_detail
+        GROUP BY agent, model, run_kind
+        ORDER BY pass_rate DESC, agent
         """
     )
     if not rows:
         return "no results recorded yet"
     table = render_table(
-        ["adapter", "attempts", "passed", "tampered", "pass rate", "avg time"],
+        ["agent", "model", "kind", "attempts", "passed", "tampered", "regressed", "pass rate", "avg time"],
         [
             [
-                str(row["adapter"]),
+                str(row["agent"]),
+                str(row["model"]),
+                str(row["run_kind"]),
                 str(row["attempts"]),
                 str(row["passed"]),
                 str(row["tampered"]),
+                str(row["regressed"]),
                 _fmt_rate(row["pass_rate"]),
                 f"{row['avg_seconds']}s",
             ]
@@ -99,8 +109,9 @@ def leaderboard(store: ResultsStore) -> str:
         ],
     )
     note = (
-        "\n\nnote: 'noop' and 'oracle' are harness controls, not agents under test. "
-        "They bound the scale; they do not compete on it."
+        "\n\nnote: run_kind 'control' rows are harness controls (noop/oracle), not agents "
+        "under test -- they bound the scale rather than compete on it. "
+        "'development_sample' rows are synthetic and must never be quoted as evidence."
     )
     return table + note
 

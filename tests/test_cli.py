@@ -7,7 +7,7 @@ from benchmark.cli import main
 from benchmark.report import leaderboard, render_table, run_report
 from benchmark.storage import ResultsStore
 from tests.helpers import TempDirTestCase
-from tests.test_storage import attempt_fields
+from tests.test_storage import FakeTask, attempt_fields
 
 
 def run_cli(argv):
@@ -78,7 +78,11 @@ class CliTest(TempDirTestCase):
     def test_verify_integrity_fails_on_tampered_record(self):
         db = self.tmp / "db.sqlite3"
         store = ResultsStore(db)
-        run_id, _ = store.start_run(adapter="noop", adapter_version="v1", attempts_per_task=1)
+        store.register_tasks([FakeTask()])
+        run_id, _ = store.start_run(
+            adapter="noop", agent="noop", adapter_version="v1", attempts_per_task=1,
+            run_kind="control",
+        )
         store.record_attempt(
             **attempt_fields(run_id=run_id, status="tampered", passed=0, tampered=1)
         )
@@ -105,8 +109,10 @@ class ReportRenderingTest(TempDirTestCase):
         self.assertIn("no results", leaderboard(self.store))
 
     def test_leaderboard_flags_controls(self):
+        self.store.register_tasks([FakeTask()])
         run_id, _ = self.store.start_run(
-            adapter="oracle", adapter_version="v1", attempts_per_task=1
+            adapter="oracle", agent="oracle", adapter_version="v1", attempts_per_task=1,
+            run_kind="control",
         )
         self.store.record_attempt(**attempt_fields(run_id=run_id))
         self.assertIn("harness controls", leaderboard(self.store))

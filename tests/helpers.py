@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from benchmark.runner import clear_baseline_cache
 from benchmark.tasks import Task, load_task
 
 PASSING_TEST = """\
@@ -24,7 +25,18 @@ class T(unittest.TestCase):
 BROKEN_SOURCE = "def answer():\n    return 0\n"
 FIXED_SOURCE = "def answer():\n    return 42\n"
 
-VERIFY_COMMAND = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-q"]
+VERIFY_COMMAND = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"]
+
+HIDDEN_TEST = """\
+import unittest
+
+from src.thing import answer
+
+
+class Hidden(unittest.TestCase):
+    def test_answer_is_an_int(self):
+        self.assertIsInstance(answer(), int)
+"""
 
 
 def write_task(
@@ -34,6 +46,7 @@ def write_task(
     source: str = BROKEN_SOURCE,
     solution: str | None = FIXED_SOURCE,
     protected_paths: list[str] | None = None,
+    hidden_test: str | None = None,
     spec_overrides: dict | None = None,
 ) -> Path:
     """Create a minimal, self-contained task directory under ``root``."""
@@ -49,13 +62,19 @@ def write_task(
         (directory / "solution" / "src").mkdir(parents=True)
         (directory / "solution" / "src" / "thing.py").write_text(solution)
 
+    if hidden_test is not None:
+        (directory / "acceptance" / "tests").mkdir(parents=True)
+        (directory / "acceptance" / "tests" / "test_hidden.py").write_text(hidden_test)
+
     spec = {
         "id": task_id,
         "title": "Demo task",
         "language": "python",
-        "category": "bugfix",
+        "category": "bugfix_local",
         "difficulty": "easy",
         "prompt": "Make answer() return 42.",
+        "acceptance_criteria": ["answer() returns 42."],
+        "expected_files": ["src/thing.py"],
         "protected_paths": protected_paths if protected_paths is not None else ["tests"],
         "verify": {"command": VERIFY_COMMAND, "timeout_sec": 60},
     }
@@ -70,6 +89,10 @@ class TempDirTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = Path(tempfile.mkdtemp(prefix="agentdev-test-"))
         self.addCleanup(shutil.rmtree, self._tmp, True)
+        # Tests build and mutate fixtures in place, so a cached baseline from a
+        # previous test could describe a different tree.
+        clear_baseline_cache()
+        self.addCleanup(clear_baseline_cache)
 
     @property
     def tmp(self) -> Path:

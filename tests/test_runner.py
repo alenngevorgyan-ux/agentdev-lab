@@ -80,6 +80,33 @@ class RunAttemptTest(TempDirTestCase):
         self.assertIs(result.status, Status.FAILED)
         self.assertEqual(result.verification.exit_code, 1)
 
+    def test_per_test_outcomes_are_captured(self):
+        result = self.attempt(NoopAdapter())
+        self.assertGreater(result.tests_total, 0)
+        self.assertTrue(result.suite.parse_is_complete)
+
+    def test_diff_stats_reflect_the_edit(self):
+        result = self.attempt(OracleAdapter())
+        self.assertEqual(result.diff.files_changed, 1)
+        self.assertEqual(result.diff.changed_paths, ("src/thing.py",))
+        self.assertGreater(result.diff.lines_changed, 0)
+
+    def test_noop_changes_nothing(self):
+        self.assertTrue(self.attempt(NoopAdapter()).diff.is_empty)
+
+    def test_hidden_tests_are_invisible_to_the_agent_but_graded(self):
+        """The agent must never see the assertions it is graded on."""
+        from tests.helpers import HIDDEN_TEST
+
+        task = self.make_task(task_id="hidden-demo", hidden_test=HIDDEN_TEST)
+        self.assertFalse((task.workspace_path / "tests" / "test_hidden.py").exists())
+        result = run_attempt(task, OracleAdapter(), sandbox_root=self.root)
+        self.assertIs(result.status, Status.PASSED)
+        self.assertIn(
+            "tests.test_hidden.Hidden.test_answer_is_an_int",
+            {test.test_id for test in result.suite.tests},
+        )
+
     def test_oracle_passes_the_task(self):
         result = self.attempt(OracleAdapter())
         self.assertIs(result.status, Status.PASSED)

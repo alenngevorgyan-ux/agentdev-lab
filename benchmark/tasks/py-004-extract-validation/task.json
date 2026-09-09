@@ -5,10 +5,37 @@
   "category": "refactor",
   "difficulty": "medium",
   "prompt": "src/orders.py and src/invoices.py each carry a near-identical copy of the same record validation logic, and the copies have already drifted apart. Create src/validation.py exposing ValidationError and validate_record(record, required_fields), and rewrite both modules to use it. validate_record must return a normalised copy: required fields present and non-empty after stripping surrounding whitespace, an 'amount' field coerced to float, and no mutation of the input. Both process_orders and process_invoices must keep their existing public behaviour, including skipping invalid records and reporting them. Do not change the function signatures of process_orders or process_invoices.",
-  "protected_paths": ["tests"],
-  "tags": ["multi-file", "deduplication"],
+  "acceptance_criteria": [
+    "src/validation.py exposes ValidationError (a ValueError) and validate_record.",
+    "validate_record returns a normalised copy and never mutates its input.",
+    "Both orders and invoices delegate to the one shared implementation.",
+    "process_orders and process_invoices keep their public behaviour and signatures.",
+    "The drift is fixed: invoices now rejects empty required fields too."
+  ],
+  "expected_files": [
+    "src/validation.py",
+    "src/orders.py",
+    "src/invoices.py"
+  ],
+  "protected_paths": [
+    "tests"
+  ],
+  "tags": [
+    "multi-file",
+    "deduplication"
+  ],
   "verify": {
-    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-q"],
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-t",
+      ".",
+      "-v"
+    ],
     "timeout_sec": 120
   }
 }

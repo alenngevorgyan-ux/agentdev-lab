@@ -19,6 +19,7 @@ from typing import Any, Iterator, Sequence
 
 from . import HARNESS_PROTOCOL_VERSION, __version__
 from .config import REPO_ROOT, SCHEMA_PATH, db_path
+from .failures import TAXONOMY
 
 
 def utc_now() -> str:
@@ -75,6 +76,47 @@ class ResultsStore:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(HARNESS_PROTOCOL_VERSION),),
         )
+        # The taxonomy lives in the database so analyses can join definitions.
+        self.connection.executemany(
+            "INSERT INTO failure_categories(category, description) VALUES (?, ?) "
+            "ON CONFLICT(category) DO UPDATE SET description = excluded.description",
+            [(str(category), description) for category, description in TAXONOMY.items()],
+        )
+        self.connection.commit()
+
+    def register_tasks(self, tasks: Sequence[Any]) -> None:
+        """Snapshot task metadata so SQL can group by category and difficulty."""
+        self.connection.executemany(
+            """
+            INSERT INTO tasks (task_id, title, category, difficulty, language,
+                               timeout_sec, expected_files, has_hidden_tests, tags, first_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                title = excluded.title,
+                category = excluded.category,
+                difficulty = excluded.difficulty,
+                language = excluded.language,
+                timeout_sec = excluded.timeout_sec,
+                expected_files = excluded.expected_files,
+                has_hidden_tests = excluded.has_hidden_tests,
+                tags = excluded.tags
+            """,
+            [
+                (
+                    task.id,
+                    task.title,
+                    task.category,
+                    task.difficulty,
+                    task.language,
+                    task.verify.timeout_sec,
+                    len(task.expected_files),
+                    1 if task.has_hidden_tests else 0,
+                    ",".join(task.tags),
+                    utc_now(),
+                )
+                for task in tasks
+            ],
+        )
         self.connection.commit()
 
     # -- writing ------------------------------------------------------------
@@ -85,6 +127,9 @@ class ResultsStore:
         adapter: str,
         adapter_version: str,
         attempts_per_task: int,
+        agent: str = "",
+        model: str = "unspecified",
+        run_kind: str = "measurement",
         label: str = "",
         notes: str = "",
     ) -> tuple[int, str]:
@@ -94,15 +139,18 @@ class ResultsStore:
         cursor = self.connection.execute(
             """
             INSERT INTO runs (
-                run_uid, started_at, status, adapter, adapter_version,
-                harness_version, protocol_version, attempts_per_task,
+                run_uid, started_at, status, run_kind, adapter, agent, model,
+                adapter_version, harness_version, protocol_version, attempts_per_task,
                 git_commit, git_dirty, python_version, platform, label, notes
-            ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_uid,
                 utc_now(),
+                run_kind,
                 adapter,
+                agent or adapter,
+                model,
                 adapter_version,
                 __version__,
                 HARNESS_PROTOCOL_VERSION,
@@ -135,7 +183,21 @@ class ResultsStore:
             "status",
             "passed",
             "tampered",
+            "failure_category",
+            "classification_source",
             "reason",
+            "tests_total",
+            "tests_passed",
+            "baseline_passed",
+            "regressions",
+            "files_changed",
+            "lines_added",
+            "lines_deleted",
+            "expected_files_touched",
+            "tool_calls",
+            "num_turns",
+            "cost_usd",
+            "human_interventions",
             "verify_exit_code",
             "verify_duration_ms",
             "agent_duration_ms",
@@ -144,6 +206,7 @@ class ResultsStore:
             "protected_hash_after",
             "workspace_hash_before",
             "workspace_hash_after",
+            "notes",
         )
         missing = [column for column in columns if column not in fields]
         if missing:
@@ -160,6 +223,28 @@ class ResultsStore:
         )
         self.connection.commit()
         return int(cursor.lastrowid)
+
+    def record_tests(
+        self, attempt_id: int, rows: Sequence[tuple[str, str, int, int]]
+    ) -> None:
+        """Store per-test outcomes: (test_id, outcome, baseline_satisfied, is_hidden)."""
+        if not rows:
+            return
+        self.connection.executemany(
+            "INSERT INTO attempt_tests (attempt_id, test_id, outcome, baseline_satisfied, is_hidden) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(attempt_id, *row) for row in rows],
+        )
+        self.connection.commit()
+
+    def relabel_failure(self, attempt_id: int, category: str, note: str = "") -> None:
+        """Apply a human failure label, which is tracked separately from the classifier."""
+        self.connection.execute(
+            "UPDATE attempts SET failure_category = ?, classification_source = 'human', "
+            "notes = ? WHERE id = ?",
+            (category, note, attempt_id),
+        )
+        self.connection.commit()
 
     def record_logs(self, attempt_id: int, streams: dict[str, str]) -> None:
         rows = [

@@ -5,10 +5,35 @@
   "category": "feature",
   "difficulty": "medium",
   "prompt": "src/config.py declares resolve_config(layers) but does not implement it. It must merge a sequence of nested configuration dictionaries, where later layers override earlier ones. Nested dictionaries merge recursively; every other value type (including lists) is replaced wholesale. Input layers must never be mutated. Raise ConfigError with a dotted key path when two layers disagree on whether a key holds a mapping. Implement it so the existing test suite passes.",
-  "protected_paths": ["tests"],
-  "tags": ["data-structures", "api-design"],
+  "acceptance_criteria": [
+    "resolve_config merges layers left to right, later layers winning.",
+    "Nested mappings merge recursively; every other value type is replaced wholesale.",
+    "Input layers are never mutated, at any depth.",
+    "A key that is a mapping in one layer and a non-mapping in another raises ConfigError.",
+    "The ConfigError message names the conflicting key by dotted path."
+  ],
+  "expected_files": [
+    "src/config.py"
+  ],
+  "protected_paths": [
+    "tests"
+  ],
+  "tags": [
+    "data-structures",
+    "api-design"
+  ],
   "verify": {
-    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-q"],
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-t",
+      ".",
+      "-v"
+    ],
     "timeout_sec": 120
   }
 }

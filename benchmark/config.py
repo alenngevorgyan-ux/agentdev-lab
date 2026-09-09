@@ -19,6 +19,8 @@ DEFAULT_DB_PATH = DEFAULT_RESULTS_DIR / "agentdev.sqlite3"
 #: Hard ceiling applied to any single subprocess, regardless of task settings.
 MAX_TIMEOUT_SEC = 3600
 
+VALID_RUN_KINDS = frozenset({"measurement", "control", "development_sample"})
+
 #: Captured stream output is truncated at this size before being stored.
 MAX_CAPTURED_BYTES = 256 * 1024
 
@@ -45,7 +47,16 @@ class RunConfig:
     keep_sandboxes: bool = False
     notes: str = ""
     label: str = ""
+    #: Product name of the agent under test; defaults to the adapter name.
+    agent: str = ""
+    #: Model identifier, recorded so results are attributable to a build.
+    model: str = ""
+    #: 'measurement' for real data, 'control' for harness controls,
+    #: 'development_sample' for synthetic rows that must never be quoted.
+    run_kind: str = "measurement"
 
     def __post_init__(self) -> None:
         if self.attempts < 1:
             raise ValueError("attempts must be >= 1")
+        if self.run_kind not in VALID_RUN_KINDS:
+            raise ValueError(f"run_kind must be one of {sorted(VALID_RUN_KINDS)}")

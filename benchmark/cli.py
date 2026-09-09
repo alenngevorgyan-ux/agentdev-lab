@@ -50,6 +50,9 @@ def cmd_list(args: argparse.Namespace) -> int:
                         "category": task.category,
                         "difficulty": task.difficulty,
                         "tags": list(task.tags),
+                        "acceptance_criteria": list(task.acceptance_criteria),
+                        "expected_files": list(task.expected_files),
+                        "has_hidden_tests": task.has_hidden_tests,
                         "protected_paths": list(task.protected_paths),
                         "fingerprint": task.spec_fingerprint(),
                     }
@@ -64,10 +67,20 @@ def cmd_list(args: argparse.Namespace) -> int:
         return EXIT_OK
     print(
         render_table(
-            ["id", "difficulty", "category", "title"],
-            [[task.id, task.difficulty, task.category, task.title] for task in tasks],
+            ["id", "difficulty", "category", "hidden", "title"],
+            [
+                [
+                    task.id,
+                    task.difficulty,
+                    task.category,
+                    "yes" if task.has_hidden_tests else "no",
+                    task.title,
+                ]
+                for task in tasks
+            ],
         )
     )
+    print(f"\n{len(tasks)} task(s)")
     return EXIT_OK
 
 
@@ -89,11 +102,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         keep_sandboxes=args.keep_sandboxes,
         notes=args.notes,
         label=args.label,
+        agent=args.agent,
+        model=args.model,
+        run_kind="control" if args.adapter in CONTROL_ADAPTERS else "measurement",
     )
     try:
         tasks = select_tasks(config.task_ids)
     except TaskSpecError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if args.category:
+        tasks = [task for task in tasks if task.category in set(args.category)]
+    if args.difficulty:
+        tasks = [task for task in tasks if task.difficulty in set(args.difficulty)]
+    if not tasks:
+        print("error: no tasks match the given filters", file=sys.stderr)
         return EXIT_USAGE
 
     print(
@@ -196,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--task", action="append", default=[], help="task id (repeatable; default: all)")
     p_run.add_argument("--attempts", type=int, default=1, help="attempts per task (default: 1)")
     p_run.add_argument("--keep-sandboxes", action="store_true", help="do not delete sandboxes")
+    p_run.add_argument("--agent", default="", help="agent product name (default: adapter name)")
+    p_run.add_argument("--model", default="", help="model identifier under test")
+    p_run.add_argument("--category", action="append", default=[], help="filter tasks by category")
+    p_run.add_argument("--difficulty", action="append", default=[], help="filter tasks by difficulty")
     p_run.add_argument("--label", default="", help="short label for this run")
     p_run.add_argument("--notes", default="", help="free-text notes stored with the run")
     p_run.add_argument("--db", type=Path, default=None, help="results database path")

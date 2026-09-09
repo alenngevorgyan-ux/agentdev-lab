@@ -21,13 +21,49 @@ from pathlib import Path
 from .config import MAX_TIMEOUT_SEC, TASKS_DIR
 from .hashing import hash_json, hash_tree
 
-VALID_CATEGORIES = frozenset({"bugfix", "feature", "refactor", "performance"})
+#: The capability dimensions the suite is designed to cover. Each names a
+#: distinct thing an agent must be able to do on a real codebase.
+VALID_CATEGORIES = frozenset(
+    {
+        "exploration",              # find the right place in an unfamiliar repo
+        "bugfix_local",             # a defect contained in one file
+        "bugfix_multifile",         # a defect whose fix spans modules
+        "feature",                  # build something new to a written spec
+        "refactor",                 # restructure without changing behaviour
+        "test_generation",          # write the tests, not just the code
+        "requirements_following",   # honour every clause of a precise spec
+        "ambiguous_requirements",   # act sensibly when the spec underspecifies
+        "regression_avoidance",     # change one behaviour, preserve the rest
+        "dependency_api",           # use an unfamiliar in-repo API correctly
+        "long_context_navigation",  # work across a repo too large to hold at once
+        "architectural_constraints",# respect a stated design boundary
+    }
+)
 VALID_DIFFICULTIES = frozenset({"easy", "medium", "hard"})
 
 _REQUIRED_KEYS = frozenset(
-    {"id", "title", "language", "category", "difficulty", "prompt", "protected_paths", "verify"}
+    {
+        "id",
+        "title",
+        "language",
+        "category",
+        "difficulty",
+        "prompt",
+        "acceptance_criteria",
+        "protected_paths",
+        "verify",
+    }
 )
-_OPTIONAL_KEYS = frozenset({"workspace_dir", "solution_dir", "tags", "$comment"})
+_OPTIONAL_KEYS = frozenset(
+    {
+        "workspace_dir",
+        "solution_dir",
+        "acceptance_dir",
+        "expected_files",
+        "tags",
+        "$comment",
+    }
+)
 _VERIFY_REQUIRED = frozenset({"command", "timeout_sec"})
 
 
@@ -56,9 +92,12 @@ class Task:
     prompt: str
     protected_paths: tuple[str, ...]
     verify: VerifySpec
+    acceptance_criteria: tuple[str, ...]
     directory: Path
     workspace_dir: str = "workspace"
     solution_dir: str = "solution"
+    acceptance_dir: str = "acceptance"
+    expected_files: tuple[str, ...] = field(default_factory=tuple)
     tags: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -70,8 +109,21 @@ class Task:
         return self.directory / self.solution_dir
 
     @property
+    def acceptance_path(self) -> Path:
+        return self.directory / self.acceptance_dir
+
+    @property
     def has_reference_solution(self) -> bool:
         return self.solution_path.is_dir()
+
+    @property
+    def has_hidden_tests(self) -> bool:
+        """Whether extra tests are overlaid only at evaluation time.
+
+        Hidden tests are never present in the workspace the agent sees, so an
+        agent cannot tune its work to the exact assertions it will be graded on.
+        """
+        return self.acceptance_path.is_dir()
 
     def spec_fingerprint(self) -> str:
         """Digest covering both the spec and the fixture tree it ships with.
@@ -89,10 +141,15 @@ class Task:
                     "difficulty": self.difficulty,
                     "prompt": self.prompt,
                     "protected_paths": list(self.protected_paths),
+                    "acceptance_criteria": list(self.acceptance_criteria),
+                    "expected_files": list(self.expected_files),
                     "verify": self.verify.as_dict(),
                     "tags": list(self.tags),
                 },
                 "workspace": hash_tree(self.workspace_path),
+                "hidden_tests": (
+                    hash_tree(self.acceptance_path) if self.has_hidden_tests else ""
+                ),
             }
         )
 
@@ -177,8 +234,13 @@ def load_task(directory: Path) -> Task:
 
     workspace_dir = raw.get("workspace_dir", "workspace")
     solution_dir = raw.get("solution_dir", "solution")
-    _require(isinstance(workspace_dir, str), f"{task_id}: 'workspace_dir' must be a string")
-    _require(isinstance(solution_dir, str), f"{task_id}: 'solution_dir' must be a string")
+    acceptance_dir = raw.get("acceptance_dir", "acceptance")
+    for key, value in (
+        ("workspace_dir", workspace_dir),
+        ("solution_dir", solution_dir),
+        ("acceptance_dir", acceptance_dir),
+    ):
+        _require(isinstance(value, str), f"{task_id}: '{key}' must be a string")
 
     task = Task(
         id=task_id,
@@ -189,9 +251,16 @@ def load_task(directory: Path) -> Task:
         prompt=raw["prompt"],
         protected_paths=_parse_str_tuple(raw["protected_paths"], task_id, "protected_paths", allow_empty=False),
         verify=_parse_verify(raw["verify"], task_id),
+        acceptance_criteria=_parse_str_tuple(
+            raw["acceptance_criteria"], task_id, "acceptance_criteria", allow_empty=False
+        ),
         directory=directory,
         workspace_dir=workspace_dir,
         solution_dir=solution_dir,
+        acceptance_dir=acceptance_dir,
+        expected_files=_parse_str_tuple(
+            raw.get("expected_files", []), task_id, "expected_files", allow_empty=True
+        ),
         tags=_parse_str_tuple(raw.get("tags", []), task_id, "tags", allow_empty=True),
     )
 
@@ -201,6 +270,16 @@ def load_task(directory: Path) -> Task:
             (task.workspace_path / rel).exists(),
             f"{task_id}: protected path {rel!r} does not exist in the workspace",
         )
+    # A hidden test that lands on top of a visible one would silently replace
+    # the assertions the agent was shown, which is a different experiment.
+    if task.has_hidden_tests:
+        for hidden in task.acceptance_path.rglob("*"):
+            if hidden.is_file():
+                relative = hidden.relative_to(task.acceptance_path)
+                _require(
+                    not (task.workspace_path / relative).exists(),
+                    f"{task_id}: hidden test {relative.as_posix()!r} would overwrite a visible file",
+                )
     return task
 
 

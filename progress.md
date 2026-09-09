@@ -31,6 +31,28 @@ demonstrated it can detect its own failure modes.
 
 ---
 
+## Implementation plan v2 — full research instrument
+
+Session 3 expands the harness from a working measurement apparatus into the
+complete instrument: hidden acceptance tests, per-test metrics, regression
+detection, a failure taxonomy, a 15-25 task suite, SQL analytics, a dashboard,
+and export.
+
+| # | Milestone | Definition of done | Status |
+| --- | --- | --- | --- |
+| N1 | Metrics model v2 | Per-test results, regressions, diff stats, tool calls, cost, failure category, agent/model split, run kinds. Protocol version 2. | planned |
+| N2 | Hidden acceptance tests | `acceptance/` overlay applied only after the agent's turn; the agent never sees the tests it is graded on. | planned |
+| N3 | Baseline + regression detection | Pristine baseline evaluated per attempt; a test that passed before and fails after is a recorded regression. | planned |
+| N4 | Failure taxonomy | 12-category taxonomy with an evidence-based classifier, honestly labelled as heuristic. | planned |
+| N5 | Task suite 15-25 | Realistic multi-file tasks across all twelve capability categories. | planned |
+| N6 | SQL analytics | 20+ documented queries: GROUP BY, JOIN, CTE, CASE, window functions, ranking, comparative analysis. | planned |
+| N7 | Export | JSON and CSV export of runs, attempts, per-test results. | planned |
+| N8 | Dashboard | Zero-dependency local dashboard: headline metrics, agent comparison, category/difficulty breakdowns, latency distribution, failure taxonomy, run explorer. | planned |
+| N9 | Sample development data | Synthetic runs, unmistakably labelled, so the analytics stack is reviewable before real agent runs exist. | planned |
+| N10 | Setup + final pass | One init command, clean-install check, full suite, every query verified, honest limitations. | planned |
+
+---
+
 ## 2026-09-09 — Session 1: foundation and working harness
 
 ### Built

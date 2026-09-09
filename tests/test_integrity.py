@@ -9,7 +9,7 @@ from benchmark.integrity import (
 from benchmark.storage import ResultsStore
 from benchmark.tasks import load_task
 from tests.helpers import FIXED_SOURCE, TempDirTestCase, write_task
-from tests.test_storage import attempt_fields
+from tests.test_storage import FakeTask, attempt_fields
 
 
 class TaskDefinitionCheckTest(TempDirTestCase):
@@ -65,8 +65,10 @@ class RecordedResultsCheckTest(TempDirTestCase):
         super().setUp()
         self.store = ResultsStore(self.tmp / "results.sqlite3")
         self.addCleanup(self.store.close)
+        self.store.register_tasks([FakeTask()])
         self.run_id, self.run_uid = self.store.start_run(
-            adapter="noop", adapter_version="v1", attempts_per_task=1
+            adapter="noop", agent="noop", adapter_version="v1", attempts_per_task=1,
+            run_kind="control",
         )
 
     def test_clean_record_passes(self):
@@ -77,7 +79,8 @@ class RecordedResultsCheckTest(TempDirTestCase):
     def test_fixture_drift_is_detected(self):
         self.store.record_attempt(**attempt_fields(run_id=self.run_id, task_fingerprint="fp-v1"))
         other_run, _ = self.store.start_run(
-            adapter="noop", adapter_version="v1", attempts_per_task=1
+            adapter="noop", agent="noop", adapter_version="v1", attempts_per_task=1,
+            run_kind="control",
         )
         self.store.record_attempt(**attempt_fields(run_id=other_run, task_fingerprint="fp-v2"))
         report = check_recorded_results(self.store)
@@ -87,7 +90,7 @@ class RecordedResultsCheckTest(TempDirTestCase):
     def test_inert_agent_attempt_is_flagged(self):
         """A non-control attempt that changed nothing is not a capability measurement."""
         run_id, _ = self.store.start_run(
-            adapter="claude-code", adapter_version="v1", attempts_per_task=1
+            adapter="claude-code", agent="claude-code", adapter_version="v1", attempts_per_task=1
         )
         self.store.record_attempt(
             **attempt_fields(
