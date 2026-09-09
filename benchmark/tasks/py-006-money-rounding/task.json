@@ -1,0 +1,24 @@
+{
+  "id": "py-006-money-rounding",
+  "title": "Fix cent drift across the pricing and invoicing modules",
+  "language": "python",
+  "category": "bugfix_multifile",
+  "difficulty": "hard",
+  "prompt": "Finance reports that invoice totals are occasionally one or two cents off, most often on discounted lines and on invoices with many lines. The money stack rounds in the wrong places. Correct it so that: a line total is computed at full precision and rounded to cents exactly once; the subtotal is the sum of the rounded line totals; tax is computed on the rounded subtotal and rounded once; and the invoice total is the sum of those two rounded figures. All rounding is half-up to two decimal places. Use Decimal throughout the money path - float arithmetic must not decide a cent. Do not change any public function signature.",
+  "acceptance_criteria": [
+    "line_total rounds exactly once, after applying quantity and discount at full precision.",
+    "subtotal is the sum of already-rounded line totals.",
+    "Tax is computed from the rounded subtotal and rounded half-up to cents.",
+    "invoice_total equals rounded subtotal plus rounded tax, exactly.",
+    "Rounding is ROUND_HALF_UP, not banker's rounding.",
+    "No float arithmetic remains on the money path.",
+    "Public signatures of line_total, subtotal and invoice_total are unchanged."
+  ],
+  "expected_files": ["src/money.py", "src/pricing.py", "src/invoicing.py"],
+  "protected_paths": ["tests"],
+  "tags": ["decimal", "cross-module"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

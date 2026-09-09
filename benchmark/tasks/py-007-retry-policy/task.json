@@ -1,0 +1,42 @@
+{
+  "id": "py-007-retry-policy",
+  "title": "Implement a deterministic retry policy with exponential backoff",
+  "language": "python",
+  "category": "feature",
+  "difficulty": "medium",
+  "prompt": "src/retry.py declares RetryPolicy and call_with_retry but does not implement them. Implement both. RetryPolicy(max_attempts, base_delay, max_delay, multiplier, jitter) computes the delay before attempt n (where n >= 2, so attempt 2 is the first retry) as base_delay * multiplier ** (n - 2), capped at max_delay; delay_for(1) is 0.0. When jitter is enabled the delay is multiplied by a factor drawn from the injected Random instance in [0.5, 1.5]; with jitter disabled the Random instance must not be touched at all. call_with_retry(operation, policy, sleeper, retry_on) calls operation(), returning its result on success. On an exception listed in retry_on it sleeps for the computed delay and retries, up to max_attempts total calls; the final failure is re-raised unchanged. Exceptions not listed in retry_on propagate immediately without sleeping.",
+  "acceptance_criteria": [
+    "A successful first call performs no sleep and no retry.",
+    "Delays follow base_delay * multiplier ** (attempt - 2) for attempt >= 2, capped at max_delay.",
+    "With jitter disabled the injected Random is never consulted.",
+    "With jitter enabled each delay is scaled by a factor in [0.5, 1.5] drawn from the injected Random.",
+    "An exception outside retry_on propagates immediately with no sleep.",
+    "After max_attempts failures the last exception is re-raised unchanged.",
+    "The total number of operation calls never exceeds max_attempts.",
+    "Invalid policy parameters raise ValueError."
+  ],
+  "expected_files": [
+    "src/retry.py"
+  ],
+  "protected_paths": [
+    "tests"
+  ],
+  "tags": [
+    "resilience",
+    "injectable-dependencies"
+  ],
+  "verify": {
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-t",
+      ".",
+      "-v"
+    ],
+    "timeout_sec": 180
+  }
+}

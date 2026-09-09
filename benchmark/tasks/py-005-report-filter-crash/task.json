@@ -1,0 +1,22 @@
+{
+  "id": "py-005-report-filter-crash",
+  "title": "Locate and fix a crash reported only by its symptom",
+  "language": "python",
+  "category": "exploration",
+  "difficulty": "medium",
+  "prompt": "Bug report from support: \"Generating a sales report with no filters selected crashes with 'ZeroDivisionError'. Adding any filter makes it work again.\" Reproduce it, find the responsible code, and fix it so a report with no filters is generated over the full dataset. Empty-result reports must also be handled: report a share of 0.0 rather than crashing. Keep every other reporting behaviour unchanged.",
+  "acceptance_criteria": [
+    "build_report succeeds when the filter list is empty, covering all records.",
+    "build_report succeeds when filters match no records, reporting zero totals and 0.0 shares.",
+    "Category shares still sum to 1.0 (within floating-point tolerance) when there is data.",
+    "Existing filtering, sorting and formatting behaviour is unchanged.",
+    "The fix is made in the module actually responsible, not worked around at the call site."
+  ],
+  "expected_files": ["src/reporting.py"],
+  "protected_paths": ["tests"],
+  "tags": ["repo-navigation", "edge-cases"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

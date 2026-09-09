@@ -1,0 +1,25 @@
+{
+  "id": "py-010-csv-export",
+  "title": "Add CSV export from an underspecified request",
+  "language": "python",
+  "category": "ambiguous_requirements",
+  "difficulty": "medium",
+  "prompt": "Ticket from the product team, verbatim: \"Users want to download the sales report as CSV so they can open it in Excel. Please add export_csv() to src/export.py.\" That is all the detail we have and the requester is unreachable today. The report rows come from src/reporting.build_rows(). Ship something a competent reviewer would accept without follow-up questions: make the reasonable choices a careful engineer would make about headers, ordering, quoting and encoding, and write down the choices you made and why in a module docstring.",
+  "acceptance_criteria": [
+    "export_csv accepts the report rows and returns CSV text.",
+    "The output starts with a header row naming the columns.",
+    "Column order is stable and matches the order of the row keys.",
+    "Values containing a comma, a quote or a newline are correctly quoted and escaped.",
+    "Row order from the input is preserved rather than re-sorted arbitrarily.",
+    "Line endings are consistent, and the output ends with a single trailing newline or none - not a mix.",
+    "Empty input still produces the header row.",
+    "The module documents the interpretation choices that the ticket left open."
+  ],
+  "expected_files": ["src/export.py"],
+  "protected_paths": ["tests"],
+  "tags": ["underspecified", "sensible-defaults"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}

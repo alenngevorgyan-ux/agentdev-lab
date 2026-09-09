@@ -1,0 +1,22 @@
+{
+  "id": "py-008-write-slug-tests",
+  "title": "Write a test suite strong enough to catch real defects",
+  "language": "python",
+  "category": "test_generation",
+  "difficulty": "hard",
+  "prompt": "src/slugify.py contains a working slugify() implementation and its documented contract. Write a thorough test suite for it in agent_tests/test_slugify.py using unittest. Your tests must pass against the current, correct implementation. They will also be run against several deliberately broken variants of slugify(), and each broken variant must cause at least one of your tests to fail. Do not modify src/slugify.py - it is the specification. Read its docstring carefully and cover every clause, including the edge cases.",
+  "acceptance_criteria": [
+    "agent_tests/test_slugify.py exists and contains at least six unittest test methods.",
+    "The suite passes against the correct implementation.",
+    "Every mutant implementation is caught by at least one failing test.",
+    "src/slugify.py is unmodified.",
+    "The tests import slugify from src.slugify rather than redefining it."
+  ],
+  "expected_files": ["agent_tests/test_slugify.py"],
+  "protected_paths": ["tests", "src/slugify.py"],
+  "tags": ["mutation-testing", "test-quality"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 300
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "id": "py-009-version-spec",
+  "title": "Implement a version parser to an exact written specification",
+  "language": "python",
+  "category": "requirements_following",
+  "difficulty": "hard",
+  "prompt": "Implement parse_version and compare_versions in src/version.py exactly as the specification in docs/VERSION_SPEC.md describes. The specification is precise and every clause matters, including the ordering rules for pre-release identifiers and the handling of build metadata. Do not invent behaviour the specification does not state, and do not import a third-party version library - the standard library only.",
+  "acceptance_criteria": [
+    "parse_version returns a Version with major, minor, patch, prerelease tuple and build string.",
+    "A malformed version raises InvalidVersion with the offending input in the message.",
+    "Leading zeroes in numeric identifiers are rejected, as the specification requires.",
+    "Build metadata is parsed but ignored entirely when comparing.",
+    "A version with a pre-release sorts before the same version without one.",
+    "Numeric pre-release identifiers compare numerically and sort before alphanumeric ones.",
+    "A longer pre-release chain sorts after a shorter one when all preceding identifiers are equal.",
+    "compare_versions returns -1, 0 or 1 and is consistent with sorting."
+  ],
+  "expected_files": ["src/version.py"],
+  "protected_paths": ["tests", "docs"],
+  "tags": ["spec-compliance", "ordering"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+    "timeout_sec": 180
+  }
+}
