@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Benchmark runtime output (never commit generated results as source)
+results/
+runs/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Sandboxes / scratch
+.sandboxes/
+.tmp/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,14 @@
+{
+  "id": "py-001-interval-merge",
+  "title": "Fix boundary handling in interval merging",
+  "language": "python",
+  "category": "bugfix",
+  "difficulty": "easy",
+  "prompt": "src/intervals.py contains merge_intervals(), which collapses a list of [start, end] pairs into a minimal set of non-overlapping intervals. It mishandles intervals that touch at a boundary and it assumes the input is already sorted. Fix the implementation so the existing test suite passes. Do not change the function signature.",
+  "protected_paths": ["tests"],
+  "tags": ["algorithms", "edge-cases"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-q"],
+    "timeout_sec": 120
+  }
+}

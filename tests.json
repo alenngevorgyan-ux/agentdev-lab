@@ -1,0 +1,35 @@
+{
+  "$comment": "Authoritative test manifest for AgentDev Lab. Any agent or CI job MUST run these commands verbatim. Commands are never to be weakened, narrowed, or replaced to make a run look better.",
+  "version": 1,
+  "runtime": {
+    "python": ">=3.11",
+    "dependencies": "none (standard library only)"
+  },
+  "suites": [
+    {
+      "id": "unit",
+      "description": "Full unit + integration suite for the harness.",
+      "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
+      "timeout_sec": 600,
+      "authoritative": true
+    },
+    {
+      "id": "selfcheck",
+      "description": "Harness self-validation: runs the oracle and noop adapters over every registered task and asserts the expected pass/fail polarity.",
+      "command": ["python3", "-m", "benchmark", "selfcheck"],
+      "timeout_sec": 900,
+      "authoritative": true
+    },
+    {
+      "id": "integrity",
+      "description": "Verifies that no task fixture, protected test file, or stored result has been tampered with.",
+      "command": ["python3", "-m", "benchmark", "verify-integrity"],
+      "timeout_sec": 300,
+      "authoritative": true
+    }
+  ],
+  "gate": {
+    "description": "A milestone may only be committed when every authoritative suite exits 0.",
+    "required_suites": ["unit", "selfcheck", "integrity"]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "py-002-config-merge",
+  "title": "Implement layered configuration resolution",
+  "language": "python",
+  "category": "feature",
+  "difficulty": "medium",
+  "prompt": "src/config.py declares resolve_config(layers) but does not implement it. It must merge a sequence of nested configuration dictionaries, where later layers override earlier ones. Nested dictionaries merge recursively; every other value type (including lists) is replaced wholesale. Input layers must never be mutated. Raise ConfigError with a dotted key path when two layers disagree on whether a key holds a mapping. Implement it so the existing test suite passes.",
+  "protected_paths": ["tests"],
+  "tags": ["data-structures", "api-design"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-q"],
+    "timeout_sec": 120
+  }
+}

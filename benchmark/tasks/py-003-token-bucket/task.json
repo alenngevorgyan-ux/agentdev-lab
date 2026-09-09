@@ -1,0 +1,14 @@
+{
+  "id": "py-003-token-bucket",
+  "title": "Implement a deterministic token-bucket rate limiter",
+  "language": "python",
+  "category": "feature",
+  "difficulty": "hard",
+  "prompt": "src/ratelimit.py declares TokenBucket, an injectable-clock token bucket rate limiter. Implement it: the bucket holds at most `capacity` tokens, refills continuously at `refill_per_second`, starts full, and allow(cost) consumes tokens only when the whole cost is available. Time never runs backwards; a clock that moves backwards must not create tokens. retry_after(cost) reports the seconds until the given cost would be affordable, 0.0 when it already is. Implement it so the existing test suite passes.",
+  "protected_paths": ["tests"],
+  "tags": ["concurrency-adjacent", "numeric-edge-cases"],
+  "verify": {
+    "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-q"],
+    "timeout_sec": 120
+  }
+}
