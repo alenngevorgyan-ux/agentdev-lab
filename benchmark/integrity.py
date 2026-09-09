@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .adapters import CONTROL_ADAPTERS, NoopAdapter, OracleAdapter
+from .adapters import NoopAdapter, OracleAdapter
 from .runner import run_attempt
 from .scoring import Status
 from .storage import ResultsStore
@@ -165,17 +165,17 @@ def check_recorded_results(store: ResultsStore) -> CheckReport:
         "" if dirty == 0 else f"note: {dirty} run(s) were made from an uncommitted working tree",
     )
 
-    placeholders = ", ".join("?" for _ in CONTROL_ADAPTERS)
+    # Only real measurements are audited here: a control legitimately changes
+    # nothing, and synthetic rows are disclosed by their own check below.
     inert = store.query(
-        f"""
-        SELECT r.run_uid, r.adapter, a.task_id, a.attempt_index
+        """
+        SELECT r.run_uid, r.agent, a.task_id, a.attempt_index
         FROM attempts a JOIN runs r ON r.id = a.run_id
         WHERE a.workspace_hash_before = a.workspace_hash_after
           AND a.status != 'harness_error'
-          AND r.adapter NOT IN ({placeholders})
+          AND r.run_kind = 'measurement'
         ORDER BY a.created_at DESC
-        """,
-        tuple(sorted(CONTROL_ADAPTERS)),
+        """
     )
     # An agent that changed nothing almost always failed to start (auth, quota,
     # a crash swallowed by a zero exit code). Scoring that as a capability
@@ -187,9 +187,24 @@ def check_recorded_results(store: ResultsStore) -> CheckReport:
         if not inert
         else "attempts recorded with no file changes -- these are not capability measurements:\n         "
         + "\n         ".join(
-            f"{row['adapter']} / {row['task_id']} #{row['attempt_index']} ({row['run_uid'][:8]})"
+            f"{row['agent']} / {row['task_id']} #{row['attempt_index']} ({row['run_uid'][:8]})"
             for row in inert
         ),
+    )
+
+    samples = store.query(
+        "SELECT COUNT(*) AS n FROM attempts a JOIN runs r ON r.id = a.run_id "
+        "WHERE r.run_kind = 'development_sample'"
+    )[0]["n"]
+    # Synthetic rows are allowed to exist -- the analytics stack needs shape to
+    # be built against -- but their presence is always announced.
+    report.add(
+        "synthetic development rows are disclosed",
+        True,
+        ""
+        if samples == 0
+        else f"note: {samples} synthetic attempt(s) present. They are excluded from "
+        "'measurement' analyses and must never be quoted as evidence.",
     )
 
     tampered = store.tampered_attempts()

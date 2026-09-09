@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS failure_categories (
     description TEXT NOT NULL
 );
 
+-- Which run kinds the curated analyses currently include. Analysis queries
+-- read this table rather than hardcoding a filter, so the scope of every
+-- reported number is itself stored, inspectable and auditable -- including
+-- from the sqlite3 command line. It defaults to real measurements only.
+CREATE TABLE IF NOT EXISTS analysis_scope (
+    run_kind TEXT PRIMARY KEY
+             CHECK (run_kind IN ('measurement', 'control', 'development_sample'))
+);
+
 -- Snapshot of task metadata, refreshed on every run. Lets SQL group by
 -- category and difficulty without reading the task files.
 CREATE TABLE IF NOT EXISTS tasks (

@@ -82,6 +82,29 @@ class ResultsStore:
             "ON CONFLICT(category) DO UPDATE SET description = excluded.description",
             [(str(category), description) for category, description in TAXONOMY.items()],
         )
+        # Seed the default only for a brand-new database. Re-inserting on every
+        # open would silently widen a scope someone deliberately narrowed, which
+        # could fold synthetic rows back into a real measurement.
+        if not self.connection.execute("SELECT 1 FROM analysis_scope LIMIT 1").fetchone():
+            self.connection.execute("INSERT INTO analysis_scope(run_kind) VALUES ('measurement')")
+        self.connection.commit()
+
+    def analysis_scope(self) -> list[str]:
+        return [row["run_kind"] for row in self.query("SELECT run_kind FROM analysis_scope ORDER BY 1")]
+
+    def set_analysis_scope(self, run_kinds: Sequence[str]) -> None:
+        """Choose which run kinds the curated analyses include.
+
+        Widening the scope to include synthetic or control rows is a deliberate,
+        recorded act -- the setting lives in the database, so a later reader can
+        see what any given analysis was allowed to count.
+        """
+        if not run_kinds:
+            raise ValueError("analysis scope must include at least one run kind")
+        self.connection.execute("DELETE FROM analysis_scope")
+        self.connection.executemany(
+            "INSERT INTO analysis_scope(run_kind) VALUES (?)", [(kind,) for kind in run_kinds]
+        )
         self.connection.commit()
 
     def register_tasks(self, tasks: Sequence[Any]) -> None:

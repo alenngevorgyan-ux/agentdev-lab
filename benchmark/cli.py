@@ -10,12 +10,25 @@ from pathlib import Path
 from . import __version__
 from .adapters import CONTROL_ADAPTERS, available_adapters, get_adapter
 from .config import RunConfig, db_path
+from .dashboard import build_page, serve
+from .export import export_csv, export_json
 from .integrity import check_recorded_results, selfcheck
+from .queries import find_query, load_queries, run_query
 from .report import leaderboard, render_table, run_report, run_report_json
+from .sampledata import SAMPLE_LABEL, seed_sample_data
 from .runner import AttemptResult, execute_run
 from .scoring import Status
 from .storage import ResultsStore
 from .tasks import TaskSpecError, load_tasks, select_tasks
+
+#: Named analysis scopes. 'measurement' is the default and the only one whose
+#: numbers may be quoted as evidence.
+SCOPES = {
+    "measurement": ["measurement"],
+    "sample": ["development_sample"],
+    "control": ["control"],
+    "all": ["measurement", "control", "development_sample"],
+}
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -200,6 +213,82 @@ def cmd_report(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _render_rows(rows: list) -> str:
+    if not rows:
+        return "(no rows)"
+    headers = list(rows[0].keys())
+    body = [["" if row[h] is None else str(row[h]) for h in headers] for row in rows]
+    return render_table(headers, body)
+
+
+def cmd_sql(args: argparse.Namespace) -> int:
+    queries = load_queries()
+    if not args.query:
+        print(render_table(["query", "description"], [[q.name, q.title] for q in queries]))
+        print(f"\n{len(queries)} queries. Run one with: python3 -m benchmark sql <name-or-number>")
+        return EXIT_OK
+
+    try:
+        query = find_query(args.query)
+    except KeyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if args.show:
+        print(query.sql)
+        return EXIT_OK
+
+    with ResultsStore(args.db) as store:
+        if args.scope:
+            store.set_analysis_scope(SCOPES[args.scope])
+        scope = store.analysis_scope()
+        rows = run_query(store, query)
+        if args.json:
+            print(json.dumps([dict(row) for row in rows], indent=2, default=str))
+        else:
+            print(f"-- {query.name}: {query.title}")
+            print(f"-- analysis scope: {', '.join(scope)}")
+            if "development_sample" in scope:
+                print("-- !! SYNTHETIC ROWS ARE INCLUDED: these numbers are not evidence.")
+            print()
+            print(_render_rows(rows))
+    return EXIT_OK
+
+
+def cmd_seed_sample(args: argparse.Namespace) -> int:
+    with ResultsStore(args.db) as store:
+        run_uids = seed_sample_data(store, attempts_per_task=args.attempts, seed=args.seed)
+    print(f"seeded {len(run_uids)} synthetic run(s): {', '.join(uid[:8] for uid in run_uids)}")
+    print(f"\n!! {SAMPLE_LABEL}")
+    print("   These rows are invented. They are excluded from every 'measurement'")
+    print("   query and are reported by `benchmark verify-integrity`.")
+    return EXIT_OK
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    with ResultsStore(args.db) as store:
+        if args.format == "json":
+            written = [export_json(store, args.out)]
+        else:
+            written = export_csv(store, args.out)
+    for path in written:
+        print(path)
+    return EXIT_OK
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    if args.scope:
+        with ResultsStore(args.db) as store:
+            store.set_analysis_scope(SCOPES[args.scope])
+    if args.render:
+        with ResultsStore(args.db) as store:
+            Path(args.render).write_text(build_page(store), encoding="utf-8")
+        print(f"wrote {args.render}")
+        return EXIT_OK
+    serve(port=args.port, db=args.db)
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="benchmark",
@@ -238,6 +327,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("--db", type=Path, default=None, help="results database path")
     p_verify.add_argument("--deep", action="store_true", help="also re-run the task selfcheck")
     p_verify.set_defaults(func=cmd_verify_integrity)
+
+    p_export = sub.add_parser("export", help="export the full record as JSON or CSV")
+    p_export.add_argument("--format", choices=("json", "csv"), default="json")
+    p_export.add_argument("--out", type=Path, required=True, help="output file (json) or directory (csv)")
+    p_export.add_argument("--db", type=Path, default=None, help="results database path")
+    p_export.set_defaults(func=cmd_export)
+
+    p_dash = sub.add_parser("dashboard", help="serve the local analytics dashboard")
+    p_dash.add_argument("--port", type=int, default=8765)
+    p_dash.add_argument("--scope", choices=sorted(SCOPES), help="analysis scope to apply first")
+    p_dash.add_argument("--render", type=Path, help="write the page to a file instead of serving")
+    p_dash.add_argument("--db", type=Path, default=None, help="results database path")
+    p_dash.set_defaults(func=cmd_dashboard)
+
+    p_seed = sub.add_parser(
+        "seed-sample",
+        help="populate the database with clearly-labelled synthetic development data",
+    )
+    p_seed.add_argument("--attempts", type=int, default=3, help="synthetic attempts per task")
+    p_seed.add_argument("--seed", type=int, default=20260909, help="random seed")
+    p_seed.add_argument("--db", type=Path, default=None, help="results database path")
+    p_seed.set_defaults(func=cmd_seed_sample)
+
+    p_sql = sub.add_parser("sql", help="list or run the curated SQL analyses")
+    p_sql.add_argument("query", nargs="?", help="query name or number (omit to list them)")
+    p_sql.add_argument("--show", action="store_true", help="print the SQL instead of running it")
+    p_sql.add_argument("--json", action="store_true", help="emit JSON rows")
+    p_sql.add_argument(
+        "--scope",
+        choices=sorted(SCOPES),
+        help="which run kinds the analyses count (stored in the database)",
+    )
+    p_sql.add_argument("--db", type=Path, default=None, help="results database path")
+    p_sql.set_defaults(func=cmd_sql)
 
     p_report = sub.add_parser("report", help="report on recorded runs")
     p_report.add_argument("--run", help="run uid to report on")
