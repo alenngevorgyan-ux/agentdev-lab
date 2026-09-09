@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import Adapter, AgentOutcome
 from .canary import IsolationCanaryAdapter
+from .codex import CodexAdapter
 from .claude_code import ClaudeCodeAdapter
 from .noop import NoopAdapter
 from .oracle import OracleAdapter
@@ -16,6 +17,7 @@ _FACTORIES = {
     OracleAdapter.name: OracleAdapter,
     ClaudeCodeAdapter.name: ClaudeCodeAdapter,
     IsolationCanaryAdapter.name: IsolationCanaryAdapter,
+    CodexAdapter.name: CodexAdapter,
 }
 
 
@@ -35,6 +37,7 @@ __all__ = [
     "Adapter",
     "AgentOutcome",
     "ClaudeCodeAdapter",
+    "CodexAdapter",
     "IsolationCanaryAdapter",
     "NoopAdapter",
     "OracleAdapter",

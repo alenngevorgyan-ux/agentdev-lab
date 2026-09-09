@@ -14,10 +14,16 @@ How to run a measurement whose result means something.
 ## Before measuring
 
 ```bash
-git status --porcelain          # a clean tree, or the run is marked dirty
+git status --porcelain              # a clean tree, or the run is marked dirty
+python3 -m benchmark isolation      # a boundary must be enforceable
 python3 -m unittest discover -s tests -t . -v
-python3 -m benchmark selfcheck
+python3 -m benchmark selfcheck --deterministic
+python3 -m unittest tests.test_isolation -v
 ```
+
+If no backend can enforce a boundary, stop. A measurement taken without one is
+recorded NON-PUBLISHABLE and cannot support any claim about what the agent could
+or could not reach.
 
 `selfcheck` establishes the two bounds of the scale on the current apparatus:
 every task fails with no work and passes with the reference solution.
@@ -25,8 +31,18 @@ every task fails with no work and passes with the reference solution.
 ## Measuring
 
 ```bash
-python3 -m benchmark run --adapter claude-code --attempts 5 --label "baseline"
+ANTHROPIC_API_KEY=... python3 -m benchmark run \
+    --adapter claude-code --attempts 5 --label "baseline" \
+    --experiment experiments/claude-vs-codex-v1.json
 ```
+
+Credentials come from the environment: the boundary denies the host home
+directory, so a CLI's own login file is unreachable by design.
+
+**For an agent-vs-agent comparison, follow
+[comparison-protocol.md](comparison-protocol.md) instead of this section.** It
+fixes attempt counts, ordering, retry and rate-limit policy and the analysis
+plan in advance, and `benchmark experiment verify` checks the publication gate.
 
 **On sample size.** Agents are non-deterministic. A single attempt per task is
 an anecdote. Use `--attempts 5` or more for any number you intend to quote, and

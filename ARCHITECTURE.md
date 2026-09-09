@@ -9,22 +9,31 @@ evaluation can quietly lie.
 One **attempt** is one (task, agent) pair executed once. Its protocol is fixed:
 
 ```
-create sandbox from pinned fixture
+create a private root holding only this attempt's workspace
   evaluate a pristine copy          -> baseline: which tests passed before any work
   digest protected paths            -> before
-  agent's turn                      -> AgentOutcome (ran / did not run)
+  open an isolation boundary; the agent's turn happens inside it
   digest protected paths            -> after;  diff vs the fixture
-  if before == after and agent ran:
-      overlay the hidden acceptance tests
-      run the task's evaluation command, parse per-test outcomes
+  detect files shadowing stdlib modules the evaluator imports
+  if before == after, no shadowing, and the agent ran:
+      host overlays the hidden acceptance tests
+      evaluate inside the boundary, network denied; parse per-test outcomes
       regressions = baseline satisfied - now satisfied
-  score(tamper, agent, timeout, regressions, exit code)
+  score(tamper, shadowing, agent, timeout, regressions, exit code)
   classify the failure from recorded evidence
   append immutable row + per-test rows + captured logs
-destroy sandbox
+destroy the private root
 ```
 
-Four properties follow directly from that ordering.
+Five properties follow directly from that ordering.
+
+**The answers are unreachable, not merely unmentioned.** The agent turn runs
+inside a backend-enforced boundary whose only writable path is the workspace.
+Everything the benchmark must withhold -- hidden tests, reference solutions, the
+harness source, the results database, sibling attempts, the host home directory
+-- fails an `open()` with EPERM and does not even stat. Where nothing can be
+enforced, the harness refuses to run or marks the result NON-PUBLISHABLE. There
+is deliberately no code path that falls back to "the working directory".
 
 **The agent cannot grade itself.** `AgentOutcome` carries `completed`, which
 answers "did the process run to completion" — not "did it succeed". Success is
@@ -70,6 +79,11 @@ across two different experiments.
 | `export.py` | JSON and CSV export with provenance. | Analysis should not require this repository. |
 | `dashboard.py` | A local page rendered from the curated queries. | The dashboard performs no arithmetic of its own. |
 | `sampledata.py` | Clearly-labelled synthetic rows. | Lets the analytics be built and reviewed before real runs exist, without ever passing as evidence. |
+| `isolation/` | The boundary the agent runs inside. | A changed working directory is not a boundary. Backends either enforce one or say they cannot. |
+| `redaction.py` | Credential masking at the point of capture. | One choke point, so no downstream consumer can inherit a secret from a chattier path. |
+| `experiment.py` | Frozen, hashed comparison manifests. | Methodology fixed before results; an edit changes the hash rather than revising the past. |
+| `adapters/prompt.py` | The one prompt every agent receives. | Comparing agents on different wording measures the wording. |
+| `stats.py` | Live repository counts. | Documentation that hardcodes a count goes stale and poisons trust in every other number. |
 | `report.py` | Rendering over stored rows only. | Reports can restate the record; they can never compute a new one. |
 | `adapters/` | Agents under test and controls. | The only place that knows how to drive a specific agent. |
 
@@ -115,6 +129,23 @@ it in words when synthetic rows are included.
 The alternative, a `WHERE run_kind = 'measurement'` in each file, would have been
 invisible to anyone running the queries through `sqlite3` and impossible to widen
 without editing 24 files.
+
+## 4b. Two grading bypasses, and how they are closed
+
+Both were found by attacking the project rather than by reading it.
+
+**Planting a stdlib module.** `python -m unittest` prepends the working
+directory to `sys.path`. An agent that writes `unittest.py` into its workspace
+has the runner import *that*, print a convincing summary and exit zero -- while
+touching no protected path, so tamper detection was blind. Closed by running
+evaluation with `PYTHONSAFEPATH=1` (the real module is loaded before the
+discovery root joins the path) and, independently, by recording any added
+stdlib-shadowing name as tampering.
+
+**Scoring a non-start as a failure.** A CLI can print "Not logged in" and exit
+zero. Scored naively, every task becomes one the agent attempted and failed.
+Closed by adapter preflight, output signature scanning, and an audit check that
+flags any measured attempt which changed no file.
 
 ## 5. Deliberate constraints
 

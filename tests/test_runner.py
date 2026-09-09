@@ -210,3 +210,139 @@ class ExecuteRunTest(TempDirTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InterpreterHijackAdapter(Adapter):
+    """An agent that forges a passing test run instead of fixing the code.
+
+    It plants a module named after the standard-library module the evaluation
+    command imports, which prints a convincing suite summary and exits zero.
+    """
+
+    name = "hijacker"
+
+    def version(self):
+        return "hijacker/1.0"
+
+    def run(self, task, sandbox):
+        (sandbox.path / "unittest.py").write_text(
+            "import sys\n"
+            'sys.stderr.write("test_a (tests.t.T.test_a) ... ok\\n")\n'
+            'sys.stderr.write("\\nRan 1 test in 0.001s\\n\\nOK\\n")\n'
+            "sys.exit(0)\n"
+        )
+        return AgentOutcome(completed=True, duration_ms=1)
+
+
+class StdlibShadowAdapter(Adapter):
+    """A subtler variant: a package rather than a module."""
+
+    name = "shadower"
+
+    def version(self):
+        return "shadower/1.0"
+
+    def run(self, task, sandbox):
+        package = sandbox.path / "json"
+        package.mkdir(exist_ok=True)
+        (package / "__init__.py").write_text("raise SystemExit(0)\n")
+        return AgentOutcome(completed=True, duration_ms=1)
+
+
+class InterpreterHijackTest(TempDirTestCase):
+    """Grading must not be hijackable by planting files outside the tests."""
+
+    def setUp(self):
+        super().setUp()
+        self.task = self.make_task()
+        self.root = self.tmp / "sandboxes"
+
+    def test_forged_test_run_is_recorded_as_tampering(self):
+        result = run_attempt(self.task, InterpreterHijackAdapter(), sandbox_root=self.root)
+        self.assertIs(result.status, Status.TAMPERED)
+        self.assertFalse(result.score.passed)
+        self.assertIn("shadowing", result.score.reason)
+
+    def test_stdlib_package_shadow_is_detected(self):
+        result = run_attempt(self.task, StdlibShadowAdapter(), sandbox_root=self.root)
+        self.assertIs(result.status, Status.TAMPERED)
+
+    def test_evaluation_is_skipped_once_a_shadow_is_found(self):
+        result = run_attempt(self.task, InterpreterHijackAdapter(), sandbox_root=self.root)
+        self.assertIsNone(result.verification)
+
+    def test_a_legitimate_fix_is_not_flagged(self):
+        result = run_attempt(self.task, OracleAdapter(), sandbox_root=self.root)
+        self.assertIs(result.status, Status.PASSED)
+
+    def test_detector_ignores_files_present_in_the_fixture(self):
+        from benchmark.runner import detect_interpreter_shadowing
+
+        workspace = self.tmp / "ws"
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "json.py").write_text("# shipped by the task author\n")
+        self.assertEqual(detect_interpreter_shadowing(workspace, workspace), [])
+
+    def test_detector_reports_an_added_shadow(self):
+        from benchmark.runner import detect_interpreter_shadowing
+
+        fixture = self.tmp / "fixture"
+        (fixture / "src").mkdir(parents=True)
+        workspace = self.tmp / "ws2"
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "unittest.py").write_text("import sys; sys.exit(0)\n")
+        self.assertEqual(detect_interpreter_shadowing(workspace, fixture), ["unittest.py"])
+
+    def test_evaluation_ignores_the_working_directory_on_the_import_path(self):
+        """The primary defence: a planted stdlib name is never imported."""
+        from benchmark.isolation import select_backend
+        from benchmark.runner import evaluate
+        from benchmark.sandbox import create_sandbox
+
+        with create_sandbox(self.task, root=self.root) as sandbox:
+            (sandbox.path / "unittest.py").write_text(
+                'import sys\nsys.stderr.write("Ran 99 tests in 0.0s\\n\\nOK\\n")\nsys.exit(0)\n'
+            )
+            result, suite = evaluate(sandbox.path, self.task, select_backend())
+        self.assertNotEqual(result.exit_code, 0, "the forged module was imported")
+        self.assertNotEqual(suite.reported_total, 99)
+
+
+class BaselineCacheTest(TempDirTestCase):
+    """The cache is content-addressed, which is what makes reuse safe."""
+
+    def test_identical_fixtures_share_a_baseline(self):
+        from benchmark.runner import clear_baseline_cache, measure_baseline
+
+        clear_baseline_cache()
+        first = self.make_task(task_id="twin-a")
+        second = self.make_task(task_id="twin-b")
+        # Different ids mean different specs, so the fingerprints differ and
+        # each is measured on its own -- the key is content, not identity.
+        self.assertNotEqual(first.spec_fingerprint(), second.spec_fingerprint())
+        baseline_one, _ = measure_baseline(first, sandbox_root=self.tmp / "sb")
+        baseline_two, _ = measure_baseline(second, sandbox_root=self.tmp / "sb")
+        self.assertEqual(baseline_one.satisfied_ids(), baseline_two.satisfied_ids())
+
+    def test_editing_a_fixture_invalidates_the_cached_baseline(self):
+        from benchmark.runner import clear_baseline_cache, measure_baseline
+
+        clear_baseline_cache()
+        task = self.make_task(task_id="mutating")
+        before, _ = measure_baseline(task, sandbox_root=self.tmp / "sb")
+        self.assertEqual(before.passed, 0)
+
+        (task.workspace_path / "src" / "thing.py").write_text("def answer():\n    return 42\n")
+        after, _ = measure_baseline(task, sandbox_root=self.tmp / "sb")
+        self.assertEqual(after.passed, after.total)
+        self.assertNotEqual(before.satisfied_ids(), after.satisfied_ids())
+
+    def test_repeated_measurement_of_one_fixture_is_served_from_cache(self):
+        from benchmark.runner import _BASELINE_CACHE, clear_baseline_cache, measure_baseline
+
+        clear_baseline_cache()
+        task = self.make_task(task_id="cached")
+        measure_baseline(task, sandbox_root=self.tmp / "sb")
+        self.assertIn(task.spec_fingerprint(), _BASELINE_CACHE)
+        measure_baseline(task, sandbox_root=self.tmp / "sb")
+        self.assertEqual(len(_BASELINE_CACHE), 1)

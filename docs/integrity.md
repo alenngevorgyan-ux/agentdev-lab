@@ -80,6 +80,40 @@ rates while remaining visible in reports. Agent crashes and timeouts are
 `agent_error` and **are** counted — an agent that cannot finish has not solved
 the task.
 
+## 6b. The answers are structurally unreachable
+
+**Failure it prevents:** an agent reading the tests, the reference solution or
+the grading logic it is being measured against.
+
+Prompt instructions are not a boundary. The agent turn runs inside a
+kernel-enforced policy whose only writable path is its own workspace; the task
+directory, the harness checkout, the results database, sibling attempts and the
+host home directory cannot be read, written or even stat-ed. An adversarial
+canary adapter attacks that boundary on every test run and must reach nothing.
+
+Where no backend can enforce a boundary, the harness refuses to run. Running
+anyway requires `--isolation none` by name and records every affected run as
+NON-PUBLISHABLE. Full detail: [isolation.md](isolation.md).
+
+## 6c. Grading cannot be hijacked
+
+**Failure it prevents:** a forged test run.
+
+An agent that plants a file named after a standard-library module the evaluator
+imports can make the "suite" print a pass and exit zero without touching a
+protected path. Evaluation therefore runs with the working directory off the
+import path, and any added stdlib-shadowing file in the workspace root is
+recorded as tampering.
+
+## 6d. Credentials never enter the record
+
+**Failure it prevents:** publishing a secret through evidence.
+
+Captured output is redacted where it is captured, so the database, exports, the
+dashboard and the session log all inherit it. `verify-integrity` re-checks
+stored evidence for credential-shaped values, and a test asserts no tracked file
+contains one.
+
 ## 7. An agent that never ran was never measured
 
 **Failure it prevents:** recording an infrastructure failure as a capability

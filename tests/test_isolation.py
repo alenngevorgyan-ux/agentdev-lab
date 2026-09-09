@@ -19,7 +19,6 @@ from benchmark.isolation import (
     DockerBackend,
     IsolationUnavailable,
     NoIsolation,
-    SeatbeltBackend,
     SessionSpec,
     available_backends,
     get_backend,
@@ -166,11 +165,15 @@ class AdversarialCanaryTest(unittest.TestCase):
         # against something that genuinely exists.
         root = config.sandbox_root()
         root.mkdir(parents=True, exist_ok=True)
-        cls.sibling = root / "__sibling_attempt__"
+        # Named per process: the suite shares one sandbox root, and a fixed name
+        # would collide between concurrent runs.
+        cls.sibling = root / f"__sibling_attempt_{os.getpid()}__"
         (cls.sibling / "workspace").mkdir(parents=True, exist_ok=True)
         (cls.sibling / "workspace" / "leak.txt").write_text("SIBLING-ATTEMPT-CANARY\n")
 
-        cls.result = run_attempt(cls.task, IsolationCanaryAdapter(), backend=cls.backend)
+        cls.result = run_attempt(
+            cls.task, IsolationCanaryAdapter(), backend=cls.backend
+        )
         cls.findings = cls.result.agent.metadata.get("findings", {})
 
     @classmethod

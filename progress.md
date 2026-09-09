@@ -328,3 +328,180 @@ python3 -m benchmark run --adapter claude-code --agent claude-code \
 
 Confirm the attempt actually changes the workspace and that `verify-integrity`
 stays clean, then run the full suite at `--attempts 5` for a baseline (M7).
+
+---
+
+## Implementation plan v3 — surviving hostile review
+
+Session 4 addresses the objections a senior infrastructure reviewer would raise
+before looking at any number.
+
+| # | Milestone | Definition of done | Status |
+| --- | --- | --- | --- |
+| H1 | Real isolation | The agent turn runs inside a backend-enforced boundary; no silent fallback to a working directory. | **done** |
+| H2 | Adversarial proof | A hostile adapter attacks the boundary from inside; every probe denied, asserted by the suite. | **done** |
+| H3 | Run provenance | Isolation backend/version/active, publishable, network policy, model requested vs resolved, agent flags, fixture hash, timestamps. | **done** |
+| H4 | Secret hygiene | Redaction at the capture choke point; audit of stored evidence; tracked-file scan. | **done** |
+| H5 | Codex adapter | Built from the installed CLI's real flags, with parity tests against Claude Code. | **done** (no end-to-end run) |
+| H6 | Frozen comparison protocol | Pre-registered, hashed manifest; publication gate. | **done** (not yet run) |
+| H7 | Hostile methodology review | Every leakage, contamination and bias vector reviewed; real problems fixed, the rest disclosed. | **done** |
+| H8 | Documentation consistency | Volatile counts removed; docs asserted against the repository by a test. | **done** |
+| H9 | Review package | README trust/limits sections, interviewer brief, isolation and threat-model documents. | **done** |
+
+---
+
+## 2026-09-09 — Session 4: making the methodology survive hostile review
+
+The objection this session answers: **a temporary working directory is not an
+isolation boundary, so "the agent could not see the hidden tests" was a claim,
+not a fact.** It is now a fact, and the rest of the session removed the other
+objections a reviewer would raise before looking at any number.
+
+### Isolation (H1, H2)
+
+`benchmark/isolation/` defines a backend contract with three implementations.
+**Seatbelt** (macOS, kernel-enforced, deny-by-default) is active and used for
+every measurement in this repository. **Docker** is implemented but reports
+itself unavailable without a daemon, which was the case here. **`none`** exists
+only so that "we could not isolate" is a recorded fact; it is never selected
+automatically and marks runs NON-PUBLISHABLE.
+
+`Sandbox.exec` raises when no boundary is attached, so there is no code path by
+which an agent turn runs on the bare host. Each attempt gets a private root
+containing only its own workspace, scratch and home.
+
+The evidence is an adversarial adapter (`benchmark/adapters/canary.py`) that
+attacks its own boundary with nineteen probes. All nineteen are denied:
+
+```
+denied  traversal_parent, traversal_grandparent, traversal_root
+denied  host_home_listing, host_home_file
+denied  hidden_tests_dir, hidden_tests_file, stat_acceptance
+denied  solution_dir, solution_file
+denied  benchmark_source, benchmark_repo_listing, task_definition
+denied  results_db
+denied  sibling_attempts, other_attempt      (against a real sibling directory)
+denied  glob_for_acceptance
+denied  mutate_host_file                     (tracked file byte-identical after)
+denied  network_egress
+reached: []
+```
+
+### Three real defects found by attacking the project
+
+1. **A complete grading bypass.** `python -m unittest` prepends the working
+   directory to `sys.path`. An agent that writes `unittest.py` into its
+   workspace has the runner import *that* file, which prints a convincing
+   `Ran 12 ... OK` summary and exits zero -- touching no protected path, so
+   tamper detection was blind. Demonstrated, then closed twice: evaluation runs
+   with `PYTHONSAFEPATH=1`, and any added file shadowing a standard-library name
+   is recorded as tampering.
+2. **A denial of service in the measurement path,** introduced by this
+   session's own redaction work. Unbounded regex quantifiers made redacting a
+   10 KB log take 8.93s and a full-size capture hang for minutes. Since captured
+   output is attacker-influenced, an agent could stall the harness grading it.
+   Every quantifier is now bounded: the same 10 KB takes 0.038s.
+3. **A scope that widened itself:** reopening the results database re-seeded the
+   default analysis scope, which could have folded synthetic sample rows back
+   into a real measurement.
+
+A fourth, smaller finding: the test suite was not safe to run concurrently --
+several runs shared one sandbox root, which is what made it appear to hang. The
+canary's sibling directory is now named per process.
+
+### Provenance (H3)
+
+Protocol version 3. Runs now record the isolation backend, its version, whether
+a boundary was actually enforced, whether the result is publishable, the network
+policy, the agent flags, the agent timeout, the requested model **and** the
+resolved model as separate columns, and the frozen experiment hash. Attempts
+record the fixture hash they were handed, the boundary they ran under and
+start/finish timestamps. A model name is never inferred: unreported stays NULL.
+A database written under a different protocol is refused with a clear message
+rather than silently reused.
+
+### Secret hygiene (H4)
+
+Redaction happens once, where subprocess output enters the harness, so the
+database, exports, dashboard and this log all inherit it. `verify-integrity`
+re-checks stored evidence for credential-shaped values, and a test scans every
+tracked file. `bypassPermissions` and Codex's
+`--dangerously-bypass-approvals-and-sandbox` are now defensible: they are
+reachable only inside a boundary.
+
+### Codex adapter and parity (H5)
+
+Built from the installed CLI's actual `--help` output (`codex-cli 0.153.4`), not
+from guesses. One shared prompt builder means every agent receives byte-identical
+instructions; parity tests assert that, plus identical fixtures and equal
+timeouts. A live test confirms the installed CLI accepts every flag, with a
+companion test proving that check is not vacuous.
+
+**No end-to-end Codex run has been performed**, and none is claimed. The CLI
+authenticates through a ChatGPT session in `CODEX_HOME`, inside the host home
+directory, which the boundary denies by design.
+
+### Frozen comparison protocol (H6)
+
+`docs/comparison-protocol.md` fixes, in advance: identical task versions and
+fixture hashes, equal timeouts, attempts per task, retry policy, treatment of
+infrastructure errors, rate limits and timeouts, model identity rules,
+interleaved and seed-permuted ordering, and the analysis plan. Thresholds that
+could otherwise be relaxed after seeing a result are numbers in the document: a
+comparison is void above 5% rate-limited attempts or 10% timeouts.
+
+`experiments/claude-vs-codex-v1.json` is pre-registered and frozen; its hash is
+`2da56d6fb6ed9966...`, it pins every task fingerprint, and it plans 180 attempts.
+`benchmark experiment verify` implements the publication gate and currently
+reports, correctly, that the experiment has not been run.
+
+### Acceptance gate -- actual output
+
+```
+$ python3 -m unittest discover -s tests -t . -q
+Ran 386 tests in 59.377s
+OK
+
+$ python3 -m benchmark selfcheck --deterministic
+92/92 checks passed
+
+$ python3 -m benchmark verify-integrity
+10/10 checks passed
+
+$ python3 -m unittest tests.test_isolation -q
+OK          (41 isolation tests; every canary probe denied)
+
+$ every SQL analysis
+25 analyses executed, 0 failed
+
+$ credential scan over tracked files
+269 tracked files scanned; credential-shaped content in: none
+```
+
+Control runs over the full suite: `noop` 0/18, `oracle` 18/18, both
+recorded with `isolation_active = 1`.
+
+### Still true
+
+**No agent has been measured.** Both agent adapters refuse to run without a
+credential in the environment, because the boundary denies the home directories
+where their CLIs keep their logins. That refusal is the correct behaviour: a
+recorded "could not run" is worth more than a fabricated zero.
+
+**The tasks and the harness still share an author.** No mechanism here fixes
+that, and it is now stated in the README, the comparison protocol, the threat
+model and the interviewer brief.
+
+### Next step
+
+Export `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, then run one task per agent to
+confirm each attempt actually changes the workspace and that `verify-integrity`
+stays clean. Only then run the frozen experiment:
+
+```bash
+python3 -m benchmark run --adapter claude-code --attempts 5 \
+    --experiment experiments/claude-vs-codex-v1.json
+python3 -m benchmark run --adapter codex --attempts 5 \
+    --experiment experiments/claude-vs-codex-v1.json
+python3 -m benchmark experiment verify experiments/claude-vs-codex-v1.json
+```

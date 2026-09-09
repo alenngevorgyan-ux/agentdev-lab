@@ -152,6 +152,10 @@ def seed_sample_data(
         raise ValueError("no tasks registered; cannot synthesise sample data")
     store.register_tasks(tasks)
 
+    # Fingerprints are content digests over whole task trees, so they are
+    # computed once per task rather than once per synthetic attempt.
+    fingerprints = {task.id: task.spec_fingerprint() for task in tasks}
+
     run_uids: list[str] = []
     for profile in SAMPLE_AGENTS:
         run_id, run_uid = store.start_run(
@@ -178,7 +182,7 @@ def seed_sample_data(
                 attempt_id = store.record_attempt(
                     run_id=run_id,
                     task_id=task.id,
-                    task_fingerprint=task.spec_fingerprint(),
+                    task_fingerprint=fingerprints[task.id],
                     attempt_index=record["attempt_index"],
                     status=record["status"],
                     passed=record["passed"],
@@ -198,7 +202,7 @@ def seed_sample_data(
                     num_turns=record["num_turns"],
                     cost_usd=record["cost_usd"],
                     human_interventions=record["human_interventions"],
-                    fixture_hash=task.spec_fingerprint(),
+                    fixture_hash=fingerprints[task.id],
                     isolation_active=0,
                     network_policy="n/a",
                     started_at=utc_now(),

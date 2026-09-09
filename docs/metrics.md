@@ -13,9 +13,26 @@ What is stored, what is derived, and what each number does and does not mean.
 ## Recorded per run
 
 Provenance, so two numbers are only ever compared when they describe the same
-apparatus: `run_uid`, timestamps, `run_kind`, `agent`, `model`, `adapter`,
-`adapter_version`, `harness_version`, `protocol_version`, `attempts_per_task`,
-`git_commit`, `git_dirty`, `python_version`, `platform`, `label`, `notes`.
+apparatus: `run_uid`, timestamps, `run_kind`, `agent`, `model` (requested),
+`model_resolved` (reported, else NULL), `adapter`, `adapter_version`,
+`agent_flags`, `agent_timeout_sec`, `harness_version`, `protocol_version`,
+`attempts_per_task`, `git_commit`, `git_dirty`, `python_version`, `platform`,
+`isolation_backend`, `isolation_version`, `isolation_active`, `publishable`,
+`network_policy`, `experiment_name`, `experiment_hash`, `label`, `notes`.
+
+Three of those carry more weight than the rest:
+
+- **`isolation_active`** -- whether a boundary was actually enforced. A run
+  without one may not be published as an isolated measurement.
+- **`publishable`** -- the two conditions together: an enforced boundary, and an
+  agent rather than a control.
+- **`experiment_hash`** -- the frozen manifest the run executed under. Attempts
+  under different hashes are never pooled.
+
+**A model name is never inferred.** `model` is what the operator asked for;
+`model_resolved` is what the agent reported, and stays NULL when it reported
+nothing. A write-up must say "model as requested, not confirmed by the agent"
+in that case.
 
 `run_kind` is the load-bearing one:
 
@@ -40,7 +57,10 @@ apparatus: `run_uid`, timestamps, `run_kind`, `agent`, `model`, `adapter`,
 | `human_interventions` | Reserved for supervised runs; unattended runs record 0 |
 | `agent_duration_ms`, `verify_duration_ms`, `total_duration_ms` | Timing |
 | `failure_category`, `classification_source` | Taxonomy label and whether a machine or a human assigned it |
-| `task_fingerprint` | Digest of the spec *and* fixture at run time |
+| `task_fingerprint` | Digest of the spec, fixture *and* hidden tests at run time |
+| `fixture_hash` | Digest of the exact tree handed to the agent |
+| `isolation_active`, `network_policy` | The boundary this attempt actually ran under |
+| `started_at`, `finished_at` | Wall-clock bounds of the attempt |
 | Four hashes | Protected paths and workspace, before and after |
 
 ## Derived metrics

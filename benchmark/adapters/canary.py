@@ -15,7 +15,6 @@ it under the publishable backend and fails if any probe succeeds.
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 
@@ -130,9 +129,16 @@ MARKER = "AGENTDEV_PROBE_JSON "
 def probe_targets(task: Task, sandbox: Sandbox) -> dict[str, str]:
     """Concrete host paths the probe will try to reach."""
     attempts_root = str(sandbox.root.parent)
+    siblings = sorted(
+        entry
+        for entry in Path(attempts_root).glob("__sibling_attempt*")
+        if entry.is_dir()
+    )
     return {
         "attempts_root": attempts_root,
-        "other_attempt": str(Path(attempts_root) / "__sibling_attempt__"),
+        # A real sibling when the suite planted one, so the denial is tested
+        # against something that exists rather than something merely absent.
+        "other_attempt": str(siblings[0] if siblings else Path(attempts_root) / "__no_sibling__"),
         "host_home": str(Path.home()),
         "host_home_probe": str(Path.home() / ".claude.json"),
         "acceptance_dir": str(task.acceptance_path),

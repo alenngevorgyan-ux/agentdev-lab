@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmark.runner import clear_baseline_cache
 from benchmark.tasks import Task, load_task
 
 PASSING_TEST = """\
@@ -89,10 +88,10 @@ class TempDirTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = Path(tempfile.mkdtemp(prefix="agentdev-test-"))
         self.addCleanup(shutil.rmtree, self._tmp, True)
-        # Tests build and mutate fixtures in place, so a cached baseline from a
-        # previous test could describe a different tree.
-        clear_baseline_cache()
-        self.addCleanup(clear_baseline_cache)
+        # The baseline cache is content-addressed, so a mutated fixture yields a
+        # different key rather than a stale hit -- clearing it per test would
+        # only make the suite slower. Tests that need a cold cache clear it
+        # explicitly.
 
     @property
     def tmp(self) -> Path:

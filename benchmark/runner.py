@@ -23,6 +23,7 @@ Nothing between steps 4 and 8 consults the agent's opinion of its own work.
 
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,12 +34,12 @@ from .adapters.base import Adapter, AgentOutcome
 from .config import RunConfig
 from .diffstats import DiffStats, compute_diff
 from .execution import CommandResult
+from .experiment import check_drift, load_experiment
 from .failures import FailureCategory, FailureEvidence, classify
 from .isolation import (
     NETWORK_ALLOWED,
     IsolationBackend,
     IsolationReport,
-    IsolationUnavailable,
     SessionSpec,
     select_backend,
 )
@@ -51,10 +52,12 @@ from .testparse import SuiteResult, parse_unittest_output
 #: Recorded in place of a digest when the sandbox never reached a hashable state.
 UNAVAILABLE = "<unavailable>"
 
-#: Baseline evaluations keyed by task fingerprint. The fingerprint covers the
-#: spec, the fixture and the hidden tests, so two tasks sharing a key are
-#: byte-identical experiments; tasks are required to be deterministic, so their
-#: baseline cannot differ between two evaluations within one process.
+#: Baseline evaluations keyed by task fingerprint. The key is content-addressed
+#: -- it covers the spec, the fixture and the hidden tests -- so two tasks
+#: sharing a key are byte-identical experiments, and editing a fixture produces
+#: a different key rather than a stale hit. Tasks are required to be
+#: deterministic (``selfcheck --deterministic`` proves it), so a cached baseline
+#: cannot differ from a fresh one within a process.
 _BASELINE_CACHE: dict[str, tuple[SuiteResult, str]] = {}
 
 
@@ -148,10 +151,38 @@ def evaluate(
     verdict, never the agent's -- the agent has already exited by this point.
     """
     with backend.session(SessionSpec(workspace=path, network=False)) as session:
-        result = session.run(task.verify.command, timeout_sec=task.verify.timeout_sec)
+        result = session.run(
+            task.verify.command,
+            timeout_sec=task.verify.timeout_sec,
+            # PYTHONSAFEPATH stops the interpreter prepending the working
+            # directory to sys.path. Without it an agent can drop a file named
+            # after a stdlib module the runner imports -- unittest.py -- and
+            # have the "test suite" print a convincing pass and exit zero.
+            # The test suite's imports still resolve: unittest inserts the
+            # discovery root itself, after the real stdlib module is loaded.
+            extra_env={"PYTHONSAFEPATH": "1"},
+        )
     # unittest writes its per-test lines to stderr; other runners use stdout.
     suite = parse_unittest_output(result.stdout + "\n" + result.stderr)
     return result, suite
+
+
+def detect_interpreter_shadowing(workspace: Path, fixture: Path) -> list[str]:
+    """Files the agent added that would shadow a standard-library module.
+
+    Defence in depth behind ``PYTHONSAFEPATH``: planting ``unittest.py`` beside
+    the tests is an attempt to hijack grading itself, and is reported as test
+    gaming even though the hijack no longer works.
+    """
+    original = {entry.name for entry in fixture.iterdir()} if fixture.is_dir() else set()
+    shadows = []
+    for entry in sorted(workspace.iterdir()):
+        name = entry.name[:-3] if entry.name.endswith(".py") else entry.name
+        if name in original or entry.name in original:
+            continue
+        if name in sys.stdlib_module_names:
+            shadows.append(entry.name)
+    return shadows
 
 
 def _prepare_evaluation(sandbox: Sandbox, task: Task) -> list[str]:
@@ -238,6 +269,7 @@ def run_attempt(
 
         protected_after = sandbox.snapshot_protected()
         workspace_after = sandbox.snapshot_tree()
+        shadowing = detect_interpreter_shadowing(sandbox.path, task.workspace_path)
         # Measured before the hidden tests land, so the overlay is never
         # mistaken for the agent's own edits.
         diff = compute_diff(task.workspace_path, sandbox.path)
@@ -246,7 +278,7 @@ def run_attempt(
         suite: SuiteResult | None = None
         regressions: tuple[str, ...] = ()
         # A tampered or broken attempt yields no measurement worth taking.
-        if agent.completed and protected_before == protected_after:
+        if agent.completed and protected_before == protected_after and not shadowing:
             # Hidden tests land only now, after the agent has exited.
             _prepare_evaluation(sandbox, task)
             verification, suite = evaluate(sandbox.path, task, resolved)
@@ -259,6 +291,7 @@ def run_attempt(
             regressions=len(regressions),
             protected_before=protected_before,
             protected_after=protected_after,
+            interpreter_shadowing=tuple(shadowing),
         )
         result = AttemptResult(
             task_id=task.id,
@@ -424,6 +457,15 @@ def execute_run(
     if not selected:
         raise ValueError("no tasks selected")
 
+    experiment = load_experiment(Path(config.experiment)) if config.experiment else None
+    if experiment is not None:
+        drifted = check_drift(experiment)
+        if drifted:
+            raise ValueError(
+                "task fixtures have drifted from the frozen manifest and are not "
+                f"comparable with earlier attempts: {drifted}"
+            )
+
     backend = select_backend(config.isolation)
     isolation = backend.probe()
     # A control never enters the boundary, so it is never marked publishable as
@@ -447,6 +489,8 @@ def execute_run(
         ),
         adapter_version=adapter.version(),
         attempts_per_task=config.attempts,
+        experiment_name=experiment.name if experiment else "",
+        experiment_hash=experiment.manifest_hash() if experiment else "",
         run_kind=config.run_kind,
         label=config.label,
         notes=config.notes,
@@ -470,6 +514,10 @@ def execute_run(
                     backend=backend,
                 )
                 _persist(store, run_id, task, result)
+                # Observed, never inferred: only what the agent itself reported.
+                reported = result.agent.metadata.get("model_resolved")
+                if isinstance(reported, str):
+                    store.record_resolved_model(run_id, reported)
                 results.append(result)
                 if on_attempt is not None:
                     on_attempt(result)

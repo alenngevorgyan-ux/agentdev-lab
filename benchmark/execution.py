@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .config import MAX_CAPTURED_BYTES, MAX_TIMEOUT_SEC
+from .redaction import redact
 
 #: Environment variables passed through to sandboxed commands. Everything else
 #: is dropped so a stray local variable cannot change a measured outcome.
@@ -55,12 +56,20 @@ def build_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def _truncate(raw: bytes) -> str:
+def _capture(raw: bytes) -> str:
+    """Bound and sanitise a captured stream.
+
+    Redaction happens here, at the single point where subprocess output enters
+    the harness, so nothing downstream -- the database, exports, the dashboard,
+    the session log -- can inherit a credential from a chattier code path.
+    """
     if len(raw) > MAX_CAPTURED_BYTES:
         head = raw[:MAX_CAPTURED_BYTES]
         omitted = len(raw) - MAX_CAPTURED_BYTES
-        return head.decode("utf-8", "replace") + f"\n...[truncated {omitted} bytes]"
-    return raw.decode("utf-8", "replace")
+        text = head.decode("utf-8", "replace") + f"\n...[truncated {omitted} bytes]"
+    else:
+        text = raw.decode("utf-8", "replace")
+    return redact(text)
 
 
 def resolve_command(command: Sequence[str]) -> tuple[str, ...]:
@@ -130,8 +139,8 @@ def run_command(
     return CommandResult(
         command=resolved,
         exit_code=exit_code,
-        stdout=_truncate(raw_out or b""),
-        stderr=_truncate(raw_err or b""),
+        stdout=_capture(raw_out or b""),
+        stderr=_capture(raw_err or b""),
         duration_ms=duration_ms,
         timed_out=timed_out,
     )

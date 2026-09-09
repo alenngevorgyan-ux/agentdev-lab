@@ -78,6 +78,8 @@ def leaderboard(store: ResultsStore) -> str:
         SELECT agent,
                model,
                run_kind,
+               MAX(isolation_active)                           AS isolated,
+               MAX(publishable)                                AS publishable,
                COUNT(*)                                        AS attempts,
                SUM(passed)                                     AS passed,
                SUM(tampered)                                   AS tampered,
@@ -92,12 +94,13 @@ def leaderboard(store: ResultsStore) -> str:
     if not rows:
         return "no results recorded yet"
     table = render_table(
-        ["agent", "model", "kind", "attempts", "passed", "tampered", "regressed", "pass rate", "avg time"],
+        ["agent", "model", "kind", "boundary", "attempts", "passed", "tampered", "regressed", "pass rate", "avg time"],
         [
             [
                 str(row["agent"]),
                 str(row["model"]),
                 str(row["run_kind"]),
+                "publishable" if row["publishable"] else ("isolated" if row["isolated"] else "NONE"),
                 str(row["attempts"]),
                 str(row["passed"]),
                 str(row["tampered"]),

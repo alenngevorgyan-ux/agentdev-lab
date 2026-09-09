@@ -12,11 +12,13 @@ from .adapters import CONTROL_ADAPTERS, available_adapters, get_adapter
 from .config import RunConfig, db_path
 from .dashboard import build_page, serve
 from .export import export_csv, export_json
-from .integrity import check_recorded_results, selfcheck
+from .experiment import check_drift, freeze, list_experiments, load_experiment, write_experiment
+from .integrity import check_recorded_results, selfcheck, verify_experiment
 from .isolation import IsolationUnavailable, available_backends, probe_all
 from .queries import find_query, load_queries, run_query
 from .report import leaderboard, render_table, run_report, run_report_json
 from .sampledata import SAMPLE_LABEL, seed_sample_data
+from .stats import gather
 from .isolation import select_backend
 from .runner import AttemptResult, execute_run
 from .scoring import Status
@@ -126,6 +128,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         label=args.label,
         agent=args.agent,
         model=args.model,
+        experiment=args.experiment,
         run_kind="control" if args.adapter in CONTROL_ADAPTERS else "measurement",
         isolation=args.isolation,
     )
@@ -178,6 +181,90 @@ def cmd_run(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_experiment(args: argparse.Namespace) -> int:
+    if args.action == "list":
+        manifests = list_experiments()
+        if not manifests:
+            print("no experiment manifests in experiments/")
+            return EXIT_OK
+        rows = []
+        for path in manifests:
+            experiment = load_experiment(path)
+            rows.append(
+                [
+                    experiment.name,
+                    str(len(experiment.task_ids)),
+                    str(experiment.attempts_per_task),
+                    ", ".join(agent["adapter"] for agent in experiment.agents),
+                    experiment.manifest_hash()[:12],
+                ]
+            )
+        print(render_table(["name", "tasks", "attempts", "agents", "hash"], rows))
+        return EXIT_OK
+
+    if not args.manifest:
+        print("error: a manifest path is required", file=sys.stderr)
+        return EXIT_USAGE
+    path = Path(args.manifest)
+
+    if args.action == "freeze":
+        frozen = freeze(load_experiment(path))
+        write_experiment(frozen, path)
+        print(f"pinned {len(frozen.task_fingerprints)} task fingerprint(s)")
+        print(f"manifest hash: {frozen.manifest_hash()}")
+        print("\nCommit this file before the first measurement: an edit afterwards")
+        print("changes the hash, and attempts under different hashes are never pooled.")
+        return EXIT_OK
+
+    experiment = load_experiment(path)
+    if args.action == "show":
+        print(f"name       {experiment.name}")
+        print(f"hash       {experiment.manifest_hash()}")
+        print(f"agents     {', '.join(a['adapter'] + '/' + a['model'] for a in experiment.agents)}")
+        print(f"tasks      {len(experiment.task_ids)}")
+        print(f"attempts   {experiment.attempts_per_task} per task per agent")
+        print(f"timeout    {experiment.agent_timeout_sec}s")
+        print(f"isolation  {experiment.isolation}")
+        print(f"network    {experiment.network_policy}")
+        print(f"ordering   interleaved, permuted with seed {experiment.ordering_seed}")
+        print(f"planned    {len(experiment.attempt_order())} attempts")
+        print("\nanalysis plan (fixed before results are seen):")
+        for line in experiment.analysis_plan:
+            print(f"  - {line}")
+        drift = check_drift(experiment)
+        print(f"\nfixture drift: {', '.join(drift) if drift else 'none'}")
+        return EXIT_OK
+
+    with ResultsStore(args.db) as store:
+        report = verify_experiment(store, experiment)
+    print(report.render())
+    return EXIT_OK if report.ok else EXIT_FAILURE
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    stats = gather()
+    if args.json:
+        print(json.dumps(stats.as_dict(), indent=2))
+        return EXIT_OK
+    print(
+        render_table(
+            ["item", "count"],
+            [
+                ["harness version", stats.harness_version],
+                ["protocol version", str(stats.protocol_version)],
+                ["benchmark tasks", str(stats.tasks)],
+                ["capability categories", str(stats.categories)],
+                ["tasks with hidden tests", str(stats.tasks_with_hidden_tests)],
+                ["SQL analyses", str(stats.sql_queries)],
+                ["tests in the suite", str(stats.tests)],
+                ["agent adapters", ", ".join(stats.agent_adapters)],
+                ["control adapters", ", ".join(stats.control_adapters)],
+            ],
+        )
+    )
+    return EXIT_OK
+
+
 def cmd_isolation(_: argparse.Namespace) -> int:
     rows = [
         [
@@ -199,7 +286,7 @@ def cmd_isolation(_: argparse.Namespace) -> int:
 
 
 def cmd_selfcheck(args: argparse.Namespace) -> int:
-    report = selfcheck()
+    report = selfcheck(check_determinism=args.deterministic)
     print(report.render())
     return EXIT_OK if report.ok else EXIT_FAILURE
 
@@ -363,16 +450,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--model", default="", help="model identifier under test")
     p_run.add_argument("--category", action="append", default=[], help="filter tasks by category")
     p_run.add_argument("--difficulty", action="append", default=[], help="filter tasks by difficulty")
+    p_run.add_argument(
+        "--experiment", default="", help="frozen manifest this run executes under"
+    )
     p_run.add_argument("--label", default="", help="short label for this run")
     p_run.add_argument("--notes", default="", help="free-text notes stored with the run")
     p_run.add_argument("--db", type=Path, default=None, help="results database path")
     p_run.set_defaults(func=cmd_run)
+
+    p_exp = sub.add_parser("experiment", help="frozen comparison manifests")
+    p_exp.add_argument(
+        "action", choices=("list", "show", "freeze", "verify"),
+        help="list manifests, show one, pin its task fingerprints, or check the publication gate",
+    )
+    p_exp.add_argument("manifest", nargs="?", help="path to a manifest JSON file")
+    p_exp.add_argument("--db", type=Path, default=None, help="results database path")
+    p_exp.set_defaults(func=cmd_experiment)
+
+    p_stats = sub.add_parser("stats", help="live counts of what the repository contains")
+    p_stats.add_argument("--json", action="store_true")
+    p_stats.set_defaults(func=cmd_stats)
 
     p_iso = sub.add_parser("isolation", help="report which isolation backends work here")
     p_iso.set_defaults(func=cmd_isolation)
 
     p_self = sub.add_parser(
         "selfcheck", help="validate every task with the noop and oracle controls"
+    )
+    p_self.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="also evaluate each pristine fixture twice and require the same verdict",
     )
     p_self.set_defaults(func=cmd_selfcheck)
 

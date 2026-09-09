@@ -8,7 +8,7 @@ tool a reviewer already has.
 | Path | Contents |
 | --- | --- |
 | `schema.sql` | Tables, constraints, append-only triggers, reporting views. |
-| `queries/` | 24 curated analyses, numbered and documented. |
+| `queries/` | Curated analyses, numbered and documented (`benchmark sql` lists them). |
 
 ## Model
 
@@ -81,6 +81,7 @@ sqlite3 results/agentdev.sqlite3 < sql/queries/09_hardest_tasks.sql
 | 22 | Category coverage | window share-of-total |
 | 23 | Integrity audit | UNION ALL across checks, subqueries |
 | 24 | Run explorer | ROW_NUMBER window, JOIN |
+| 25 | Isolation provenance | GROUP BY, CASE, conditional aggregation |
 
 Every query is executed by the test suite against seeded data, so a broken
 query fails the build rather than silently returning nothing.

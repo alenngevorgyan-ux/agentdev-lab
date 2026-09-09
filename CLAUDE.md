@@ -44,6 +44,12 @@ Key invariants:
   never shown the assertions it is graded on.
 - **A regression demotes an attempt** whatever the exit code said, and can never
   coexist with a pass.
+- **The agent turn never runs unconfined.** `Sandbox.exec` raises when no
+  isolation session is attached. `--isolation auto` refuses to run if no backend
+  can enforce a boundary; `none` must be asked for by name and marks the run
+  NON-PUBLISHABLE. Never add a fallback path.
+- **Grading cannot be hijacked.** Evaluation runs with `PYTHONSAFEPATH=1`, and a
+  file added to the workspace root that shadows a stdlib module is tampering.
 - **Results are append-only**, enforced by SQLite triggers, not by etiquette.
 - **Every result carries provenance**: harness version, protocol version, git
   commit, dirty flag, Python version, platform, and a fingerprint of the task
@@ -74,11 +80,17 @@ benchmark/
   sampledata.py      clearly-labelled synthetic development rows
   report.py          rendering over stored rows only
   cli.py             `python3 -m benchmark ...`
-  adapters/          noop (control), oracle (control), claude_code (under test)
+  isolation/         the boundary: base, docker, seatbelt, none (never automatic)
+  redaction.py       credential masking, applied where output is captured
+  experiment.py      frozen, hashed comparison manifests
+  stats.py           live repository counts (docs must not hardcode them)
+  adapters/          prompt.py (the one shared prompt), noop/oracle/canary
+                     (controls), claude_code + codex (agents under test)
   tasks/<task-id>/   task.json + workspace/ + solution/
+experiments/         pre-registered comparison manifests, frozen and hashed
 sql/
   schema.sql         results schema, constraints, append-only triggers, views
-  queries/           24 curated analyses (see sql/README.md)
+  queries/           25 curated analyses (see sql/README.md)
 setup.sh             one-command environment check + every authoritative suite
 tests/               the harness's own suite (stdlib unittest)
 docs/                task format, adapter contract, integrity, methodology
@@ -114,10 +126,15 @@ Defined in `tests.json` and run **verbatim**. All three must exit 0 before any
 milestone is committed:
 
 ```bash
-python3 -m unittest discover -s tests -t . -v     # unit + integration
-python3 -m benchmark selfcheck                    # controls validate every task
-python3 -m benchmark verify-integrity             # audit the recorded results
+python3 -m unittest discover -s tests -t . -v      # unit + integration + adversarial
+python3 -m benchmark selfcheck --deterministic     # controls validate every task
+python3 -m benchmark verify-integrity              # audit the recorded results
+python3 -m unittest tests.test_isolation -v        # the boundary must hold
 ```
+
+Do not hardcode counts in documentation. `python3 -m benchmark stats` prints
+them, and `tests/test_docs.py` fails the build when prose and repository
+disagree.
 
 `selfcheck` is the one that matters most: for every task it asserts that the
 `noop` control **fails** it and the `oracle` control **passes** it. A task that
@@ -139,6 +156,29 @@ before real runs exist.
   result. The scope is stored in the database precisely so this is visible.
 - The dashboard and CLI both print a banner when samples are in scope. Do not
   remove it.
+
+### 6.0b Isolation claims must be structural
+
+- **Never** claim a resource was unreachable unless a backend enforced it. The
+  record carries `isolation_active` and `publishable`; respect them.
+- **Never** widen the Seatbelt profile, add a `toolchain_path`, or expose an
+  environment variable without justifying the hole in `docs/isolation.md`.
+- **Never** weaken `tests/test_isolation.py`. If a probe starts succeeding, the
+  boundary broke — that is the finding, not a test to relax.
+
+### 6.0c Secrets never enter the record
+
+- Redaction happens in `benchmark/execution.py` at capture. Do not add another
+  path by which subprocess output reaches storage.
+- **Never** put a credential in a flag, a label, a note, or `progress.md`.
+- `verify-integrity` re-checks stored evidence; keep that check passing honestly.
+
+### 6.0d Comparisons run under a frozen manifest
+
+- A comparison uses `--experiment <manifest>`; the hash is recorded per run.
+- **Never** edit a manifest after results exist to make them look better. The
+  hash changes, which is the point.
+- **Never** drop a task from a comparison after seeing its outcome.
 
 ### 6.1 No fabricated benchmark data — ever
 

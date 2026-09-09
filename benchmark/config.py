@@ -57,6 +57,8 @@ class RunConfig:
     #: Isolation backend request: 'auto' picks the strongest available and
     #: refuses if none can enforce a boundary; 'none' must be asked for by name.
     isolation: str = "auto"
+    #: Path to a frozen experiment manifest, recorded with every attempt.
+    experiment: str = ""
 
     def __post_init__(self) -> None:
         if self.attempts < 1:

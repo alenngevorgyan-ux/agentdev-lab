@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .adapters import NoopAdapter, OracleAdapter
+from .experiment import check_drift
+from .redaction import contains_secret
 from .runner import run_attempt
 from .scoring import Status
 from .storage import ResultsStore
@@ -112,13 +114,45 @@ def check_task_polarity(task: Task, *, sandbox_root: Path | None = None) -> list
     return results
 
 
-def selfcheck(tasks_dir: Path | None = None, *, sandbox_root: Path | None = None) -> CheckReport:
+def check_task_determinism(task: Task, *, sandbox_root: Path | None = None) -> CheckResult:
+    """Evaluate a pristine fixture twice and require the same verdict.
+
+    The baseline is cached per task fingerprint, which is sound only if a task
+    is deterministic. A task that answers differently on two identical runs
+    would produce phantom regressions, so it is caught here rather than
+    silently becoming noise that looks like a capability difference.
+    """
+    from .runner import measure_baseline
+
+    first, _ = measure_baseline(task, sandbox_root=sandbox_root, use_cache=False)
+    second, _ = measure_baseline(task, sandbox_root=sandbox_root, use_cache=False)
+    same = first.satisfied_ids() == second.satisfied_ids() and first.total == second.total
+    return CheckResult(
+        name=f"{task.id}: evaluates deterministically",
+        ok=same,
+        detail=""
+        if same
+        else (
+            f"two evaluations of the untouched fixture disagreed: "
+            f"{first.passed}/{first.total} then {second.passed}/{second.total}"
+        ),
+    )
+
+
+def selfcheck(
+    tasks_dir: Path | None = None,
+    *,
+    sandbox_root: Path | None = None,
+    check_determinism: bool = False,
+) -> CheckReport:
     """Full harness self-validation across every registered task."""
     report = check_task_definitions(tasks_dir)
     if not report.ok:
         return report
     for task in load_tasks(tasks_dir):
         report.checks.extend(check_task_polarity(task, sandbox_root=sandbox_root))
+        if check_determinism:
+            report.checks.append(check_task_determinism(task, sandbox_root=sandbox_root))
     return report
 
 
@@ -206,6 +240,46 @@ def check_recorded_results(store: ResultsStore) -> CheckReport:
         "and pass fractions are lower bounds, not measurements",
     )
 
+    unisolated = store.query(
+        """
+        SELECT r.agent, COUNT(*) AS n
+        FROM attempts a JOIN runs r ON r.id = a.run_id
+        WHERE r.run_kind = 'measurement' AND a.isolation_active = 0
+          AND a.status != 'harness_error'
+        GROUP BY r.agent
+        """
+    )
+    # An unisolated measurement cannot support any claim about what the agent
+    # could or could not reach, which is the claim this project exists to make.
+    report.add(
+        "every measurement ran inside an enforced boundary",
+        not unisolated,
+        ""
+        if not unisolated
+        else "NON-PUBLISHABLE attempts recorded without isolation: "
+        + ", ".join(f"{row['agent']} ({row['n']})" for row in unisolated),
+    )
+
+    # Captured output is redacted at the point of capture; this is the check
+    # that the choke point actually held for everything already stored.
+    leaked = [
+        f"attempt {row['attempt_id']} / {row['stream']}"
+        for row in store.query("SELECT attempt_id, stream, content FROM attempt_logs")
+        if contains_secret(row["content"])
+    ]
+    leaked += [
+        f"run {row['run_uid'][:8]} notes"
+        for row in store.query("SELECT run_uid, notes, label FROM runs")
+        if contains_secret(row["notes"]) or contains_secret(row["label"])
+    ]
+    report.add(
+        "no credential-shaped value is stored",
+        not leaked,
+        ""
+        if not leaked
+        else "credential-shaped values found in stored evidence: " + ", ".join(leaked[:10]),
+    )
+
     samples = store.query(
         "SELECT COUNT(*) AS n FROM attempts a JOIN runs r ON r.id = a.run_id "
         "WHERE r.run_kind = 'development_sample'"
@@ -232,4 +306,130 @@ def check_recorded_results(store: ResultsStore) -> CheckReport:
             for row in tampered
         ),
     )
+    return report
+
+
+def verify_experiment(store: ResultsStore, experiment) -> CheckReport:
+    """The publication gate from docs/comparison-protocol.md.
+
+    Every box is checked against the stored record rather than asserted in
+    prose. Failing a box does not make the data worthless -- it makes the honest
+    report "measured under these conditions, not publishable as a clean
+    comparison", with the failing box named.
+    """
+    report = CheckReport()
+    manifest_hash = experiment.manifest_hash()
+    rows = store.query(
+        """
+        SELECT a.*, r.agent, r.git_dirty, r.protocol_version, r.isolation_active,
+               r.publishable, r.run_kind, r.attempts_per_task
+        FROM attempts a JOIN runs r ON r.id = a.run_id
+        WHERE r.experiment_hash = ?
+        """,
+        (manifest_hash,),
+    )
+
+    report.add(
+        "attempts exist for this manifest",
+        bool(rows),
+        ""
+        if rows
+        else f"no attempt recorded under manifest hash {manifest_hash[:12]}; "
+        "the experiment has not been run",
+    )
+    if not rows:
+        return report
+
+    drift = check_drift(experiment)
+    report.add(
+        "task fixtures match the frozen manifest",
+        not drift,
+        "" if not drift else f"fixtures drifted since freezing: {drift}",
+    )
+
+    unisolated = [r for r in rows if not r["isolation_active"]]
+    report.add(
+        "every attempt ran inside an enforced boundary",
+        not unisolated,
+        "" if not unisolated else f"{len(unisolated)} attempt(s) ran without isolation",
+    )
+
+    unpublishable = [r for r in rows if not r["publishable"]]
+    report.add(
+        "every attempt is publishable",
+        not unpublishable,
+        "" if not unpublishable else f"{len(unpublishable)} attempt(s) are NON-PUBLISHABLE",
+    )
+
+    dirty = [r for r in rows if r["git_dirty"]]
+    report.add(
+        "every run came from a clean checkout",
+        not dirty,
+        "" if not dirty else f"{len(dirty)} attempt(s) ran from an uncommitted working tree",
+    )
+
+    protocols = {r["protocol_version"] for r in rows}
+    report.add(
+        "one protocol version across the experiment",
+        len(protocols) == 1,
+        "" if len(protocols) == 1 else f"attempts span protocol versions {sorted(protocols)}",
+    )
+
+    per_task_fingerprints: dict[str, set[str]] = {}
+    for row in rows:
+        per_task_fingerprints.setdefault(row["task_id"], set()).add(row["task_fingerprint"])
+    inconsistent = [task for task, seen in per_task_fingerprints.items() if len(seen) > 1]
+    report.add(
+        "one fixture per task across the experiment",
+        not inconsistent,
+        "" if not inconsistent else f"tasks measured against more than one fixture: {inconsistent}",
+    )
+
+    counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        counts[(row["agent"], row["task_id"])] = counts.get((row["agent"], row["task_id"]), 0) + 1
+    uneven = {agent for (agent, _), _ in counts.items()} and {
+        f"{agent}/{task}={count}"
+        for (agent, task), count in counts.items()
+        if count != experiment.attempts_per_task
+    }
+    report.add(
+        "attempts per task match the manifest",
+        not uneven,
+        "" if not uneven else f"uneven attempt counts: {sorted(uneven)[:8]}",
+    )
+
+    samples = [r for r in rows if r["run_kind"] == "development_sample"]
+    report.add(
+        "no synthetic row is inside the experiment",
+        not samples,
+        "" if not samples else f"{len(samples)} synthetic attempt(s) recorded under this manifest",
+    )
+
+    for agent in sorted({r["agent"] for r in rows}):
+        agent_rows = [r for r in rows if r["agent"] == agent]
+        rate_limited = [
+            r for r in agent_rows
+            if r["status"] == "agent_error" and "rate limit" in (r["reason"] or "").lower()
+        ]
+        share = len(rate_limited) / len(agent_rows)
+        report.add(
+            f"{agent}: rate-limit share below 5%",
+            share < 0.05,
+            ""
+            if share < 0.05
+            else f"{share:.0%} of attempts were rate limited; the comparison is void "
+            "(a throttled agent is measured on its quota, not its capability)",
+        )
+        timeouts = [r for r in agent_rows if r["status"] == "timeout"]
+        timeout_share = len(timeouts) / len(agent_rows)
+        report.add(
+            f"{agent}: timeout share below 10%",
+            timeout_share < 0.10,
+            ""
+            if timeout_share < 0.10
+            else f"{timeout_share:.0%} of attempts timed out; the budget was too tight, "
+            "raise it and re-run every agent",
+        )
+
     return report

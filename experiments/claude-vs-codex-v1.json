@@ -1,0 +1,71 @@
+{
+  "agent_timeout_sec": 900,
+  "agents": [
+    {
+      "adapter": "claude-code",
+      "agent": "claude-code",
+      "model": "unspecified"
+    },
+    {
+      "adapter": "codex",
+      "agent": "codex",
+      "model": "unspecified"
+    }
+  ],
+  "analysis_plan": [
+    "Primary: pass rate per agent over the full task set, attempts as denominator.",
+    "Secondary: first-pass success, regression rate, tamper count, median and p90 attempt duration.",
+    "Secondary: cost per success, reported only if both agents report cost.",
+    "Breakdowns by capability category and by difficulty, for both agents or neither.",
+    "No task may be dropped after its outcome is known.",
+    "Differences smaller than the within-task spread are reported as not distinguishable at this sample size.",
+    "Any inferential claim must name its test and use the task as the unit of analysis."
+  ],
+  "attempts_per_task": 5,
+  "description": "First head-to-head comparison of Claude Code and Codex over the full eighteen-task suite, under kernel-enforced isolation, five attempts per task, interleaved and permuted ordering.",
+  "isolation": "auto",
+  "name": "claude-vs-codex-v1",
+  "network_policy": "agent-turn-allowed, evaluation-denied",
+  "notes": "Task-author bias is unmitigated: the same author wrote the harness and the tasks. This must be stated alongside any headline number. See docs/comparison-protocol.md section 9.",
+  "ordering_seed": 20260909,
+  "task_fingerprints": {
+    "py-001-interval-merge": "fd068c927b77e57416c7ecf097bbb75c97a9ea9db98c418813204dc2d81b86a2",
+    "py-002-config-merge": "fa4cbc9cc75185bb08269d57bee85f4ee8ed1d92555ff6a4c5384afcc1e59b91",
+    "py-003-token-bucket": "c71a6184fafab326058cc8a110e2900a153308ef0b797fdd669af7211e95d5aa",
+    "py-004-extract-validation": "9f6e5dd79e660d2fa9e3af9794510b6c09427fc222dce834aab3b7e69e3dc9bb",
+    "py-005-report-filter-crash": "80205115f421cf6c4873b0119de2379ecd6bc58a563370dda00ffa7496a7ba91",
+    "py-006-money-rounding": "4c7bba77d8790b731c7b6c58151af62ed6055fe3e9378319faf8fdc72a4698e7",
+    "py-007-retry-policy": "994d438cca0c29b7bb9b90fd2e6764cc79c4b0593ec22e289f52a5cea8db11a3",
+    "py-008-write-slug-tests": "818a23cd4f9ea0101c4a4c04cf743be3bb187dbdfde61c47b5bd26bbcd2441f8",
+    "py-009-version-spec": "597f89461bf09495daa17e0fa0da1b12ff4a8cca8fcb9914bd15717cc9df35e9",
+    "py-010-csv-export": "7274efef7d77ecc12c857407faa4bad8b81f0a379abb2a6e70b7015a01b71d61",
+    "py-011-cache-ttl": "2a6cbd0fba2cd4e60c0449d31490f14a96947ce93057065866c528bd53a52ad6",
+    "py-012-eventbus-audit": "2476b303a296aff68bbd17d8f8377c026f051828c2ca92b3dfa611155b551ba2",
+    "py-013-pipeline-dedupe": "69419832abbd5b4aa92761fb124badc8564a784cc74a72351aa3e2ab1581c316",
+    "py-014-hexagonal-persistence": "90ad0ab39c01e82e4d414571b5edfdeae17b19b210bd80bbc1118c451933570a",
+    "py-015-pagination": "02981daa2eb739e8e6305904f36ef33e682c16b1b9d2dc5a40d1f9b46d4ddd39",
+    "py-016-notification-registry": "36d8ef4a32ba4b6c1e239d46561dcafc0c92fe74682a737e179cb1818c2ce47d",
+    "py-017-effective-timeout": "63d1ec04db8d146bf0911e46d64b49f7684d7466ec0b66829e122f947f3ac0da",
+    "py-018-timezone-window": "7a2588d9e01f4c27386cc9b31505157e5033bff69b03e94112d5c37f7997b2fb"
+  },
+  "task_ids": [
+    "py-001-interval-merge",
+    "py-002-config-merge",
+    "py-003-token-bucket",
+    "py-004-extract-validation",
+    "py-005-report-filter-crash",
+    "py-006-money-rounding",
+    "py-007-retry-policy",
+    "py-008-write-slug-tests",
+    "py-009-version-spec",
+    "py-010-csv-export",
+    "py-011-cache-ttl",
+    "py-012-eventbus-audit",
+    "py-013-pipeline-dedupe",
+    "py-014-hexagonal-persistence",
+    "py-015-pagination",
+    "py-016-notification-registry",
+    "py-017-effective-timeout",
+    "py-018-timezone-window"
+  ]
+}

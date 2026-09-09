@@ -1,5 +1,5 @@
 {
-  "$comment": "Authoritative test manifest for AgentDev Lab. Any agent or CI job MUST run these commands verbatim. Commands are never to be weakened, narrowed, or replaced to make a run look better.",
+  "$comment": "Authoritative test manifest for AgentDev Lab. Any agent or CI job MUST run these commands verbatim. Commands are never to be weakened, narrowed, or replaced to make a run look better. Counts are deliberately absent: run `python3 -m benchmark stats`.",
   "version": 1,
   "runtime": {
     "python": ">=3.11",
@@ -25,12 +25,13 @@
     },
     {
       "id": "selfcheck",
-      "description": "Harness self-validation: runs the noop and oracle controls over every registered task and asserts the expected pass/fail polarity.",
+      "description": "Harness self-validation: runs the noop and oracle controls over every registered task, asserts the expected pass/fail polarity, and evaluates each pristine fixture twice to prove the task is deterministic.",
       "command": [
         "python3",
         "-m",
         "benchmark",
-        "selfcheck"
+        "selfcheck",
+        "--deterministic"
       ],
       "timeout_sec": 1800,
       "authoritative": true
@@ -46,14 +47,28 @@
       ],
       "timeout_sec": 300,
       "authoritative": true
+    },
+    {
+      "id": "isolation",
+      "description": "Adversarial isolation suite. A hostile canary adapter attacks its own boundary from the inside; every probe must be denied. Skipped, loudly, if no backend can enforce a boundary on this machine.",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_isolation",
+        "-v"
+      ],
+      "timeout_sec": 900,
+      "authoritative": true
     }
   ],
   "gate": {
-    "description": "A milestone may only be committed when every authoritative suite exits 0.",
+    "description": "A milestone may only be committed when every authoritative suite exits 0. A comparison may only be published when `benchmark experiment verify` also passes; see docs/comparison-protocol.md.",
     "required_suites": [
       "unit",
       "selfcheck",
-      "integrity"
+      "integrity",
+      "isolation"
     ]
   },
   "setup": {

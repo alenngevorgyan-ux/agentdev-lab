@@ -9,6 +9,7 @@ it.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from ..execution import run_command
 from ..sandbox import Sandbox
 from ..tasks import Task
 from .base import Adapter, AgentOutcome
+from .prompt import build_task_prompt
 
 DEFAULT_BINARY = "claude"
 DEFAULT_TIMEOUT_SEC = 900
@@ -35,21 +37,15 @@ NOT_READY_SIGNATURES = (
     "rate limit",
 )
 
-PROMPT_TEMPLATE = """\
-You are working inside an isolated benchmark workspace. Your working directory
-already contains the project.
 
-Task: {title}
 
-{prompt}
+def _reported_model(stdout: str) -> dict[str, str]:
+    """The model the CLI named for itself, if it named one.
 
-Rules:
-- Modify only the source files needed to complete the task.
-- Do not edit, delete, weaken, or skip any test file. The following paths are
-  protected and any change to them invalidates the attempt: {protected}
-- Do not add third-party dependencies; the standard library only.
-- When you are done, stop. Do not ask questions.
-"""
+    Absent rather than guessed: an unreported model stays NULL in the record.
+    """
+    match = re.search(r'"model"\s*:\s*"([^"]+)"', stdout)
+    return {"model_resolved": match.group(1)} if match else {}
 
 
 class ClaudeCodeAdapter(Adapter):
@@ -131,11 +127,8 @@ class ClaudeCodeAdapter(Adapter):
         return {key: os.environ[key] for key in CREDENTIAL_VARS if os.environ.get(key)}
 
     def build_prompt(self, task: Task) -> str:
-        return PROMPT_TEMPLATE.format(
-            title=task.title,
-            prompt=task.prompt.strip(),
-            protected=", ".join(task.protected_paths),
-        )
+        """The shared prompt, so agents are compared on the same instructions."""
+        return build_task_prompt(task)
 
     def run(self, task: Task, sandbox: Sandbox) -> AgentOutcome:
         blocked = self.preflight()
@@ -167,5 +160,9 @@ class ClaudeCodeAdapter(Adapter):
             stderr=result.stderr,
             exit_code=result.exit_code,
             error=error,
-            metadata={"model": self.model or "default", "timeout_sec": self.timeout_sec},
+            metadata={
+                "model": self.model or "default",
+                "timeout_sec": self.timeout_sec,
+                **_reported_model(result.stdout),
+            },
         )

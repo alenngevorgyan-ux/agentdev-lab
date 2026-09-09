@@ -138,3 +138,61 @@ class ShippedRegistrySelfcheckTest(TempDirTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeterminismCheckTest(TempDirTestCase):
+    """A non-deterministic task manufactures phantom regressions."""
+
+    def test_a_deterministic_task_passes(self):
+        from benchmark.integrity import check_task_determinism
+
+        task = load_task(write_task(self.tmp / "tasks", task_id="steady"))
+        self.assertTrue(check_task_determinism(task, sandbox_root=self.tmp / "sb").ok)
+
+    def test_disagreeing_evaluations_are_caught(self):
+        """Two evaluations of the same fixture that disagree must fail the check.
+
+        Driven by stubbed results rather than by a genuinely random fixture: a
+        test that catches flakiness only most of the time is itself the kind of
+        noise this project exists to eliminate.
+        """
+        from unittest import mock
+
+        from benchmark.integrity import check_task_determinism
+        from benchmark.testparse import SuiteResult, TestOutcome, TestResult
+
+        passing = SuiteResult(
+            tests=(TestResult("t.a", TestOutcome.PASSED),), reported_total=1
+        )
+        failing = SuiteResult(
+            tests=(TestResult("t.a", TestOutcome.FAILED),), reported_total=1
+        )
+        task = load_task(write_task(self.tmp / "tasks", task_id="unsteady"))
+        with mock.patch(
+            "benchmark.runner.measure_baseline",
+            side_effect=[(passing, ""), (failing, "")],
+        ):
+            result = check_task_determinism(task, sandbox_root=self.tmp / "sb")
+        self.assertFalse(result.ok)
+        self.assertIn("disagreed", result.detail)
+
+    def test_agreeing_evaluations_pass(self):
+        from unittest import mock
+
+        from benchmark.integrity import check_task_determinism
+        from benchmark.testparse import SuiteResult, TestOutcome, TestResult
+
+        suite = SuiteResult(tests=(TestResult("t.a", TestOutcome.PASSED),), reported_total=1)
+        task = load_task(write_task(self.tmp / "tasks", task_id="steady2"))
+        with mock.patch(
+            "benchmark.runner.measure_baseline", side_effect=[(suite, ""), (suite, "")]
+        ):
+            self.assertTrue(check_task_determinism(task, sandbox_root=self.tmp / "sb").ok)
+
+    def test_selfcheck_can_include_determinism(self):
+        from benchmark.integrity import selfcheck
+
+        tasks_dir = self.tmp / "tasks"
+        write_task(tasks_dir, task_id="steady")
+        report = selfcheck(tasks_dir, sandbox_root=self.tmp / "sb", check_determinism=True)
+        self.assertTrue(any("deterministically" in check.name for check in report.checks))

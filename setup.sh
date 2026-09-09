@@ -37,14 +37,23 @@ print(f"Python {sys.version.split()[0]} at {sys.executable}")
 print("dependencies: none (standard library only)")
 PYCHECK
 
+step "Repository"
+$PY -m benchmark stats
+
 step "Task registry"
 $PY -m benchmark list
 
 step "Unit and integration suite"
 $PY -m unittest discover -s tests -t . -q
 
+step "Isolation backends"
+$PY -m benchmark isolation
+
+step "Adversarial isolation suite (the boundary must hold)"
+$PY -m unittest tests.test_isolation -q
+
 step "Harness self-check (controls validate every task)"
-$PY -m benchmark selfcheck
+$PY -m benchmark selfcheck --deterministic
 
 step "Integrity audit"
 $PY -m benchmark verify-integrity || echo "(findings above are disclosed, not hidden)"
@@ -58,6 +67,8 @@ step "Ready"
 cat <<'NEXT'
 Common commands:
 
+  python3 -m benchmark stats                         live counts
+  python3 -m benchmark isolation                     which boundaries work here
   python3 -m benchmark list                          registered tasks
   python3 -m benchmark run --adapter oracle          upper control (expect 100%)
   python3 -m benchmark run --adapter noop            lower control (expect 0%)
@@ -65,11 +76,15 @@ Common commands:
   python3 -m benchmark sql 03 --scope sample         run one against sample data
   python3 -m benchmark dashboard --scope sample      local dashboard on :8765
   python3 -m benchmark export --format csv --out out CSV export
+  python3 -m benchmark experiment show experiments/claude-vs-codex-v1.json
 
-Measuring a real agent needs credentials in the environment, for example:
+Measuring a real agent needs credentials in the environment -- the isolation
+boundary denies the host home directory, so a CLI's own login file is
+unreachable by design:
 
   ANTHROPIC_API_KEY=... python3 -m benchmark run --adapter claude-code \
-      --agent claude-code --model claude-opus-5 --attempts 5
+      --model claude-opus-5 --attempts 5 \
+      --experiment experiments/claude-vs-codex-v1.json
 NEXT
 
 if [ "$RUN_DASHBOARD" -eq 1 ]; then

@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS runs (
     git_dirty         INTEGER NOT NULL CHECK (git_dirty IN (0, 1)),
     python_version    TEXT    NOT NULL,
     platform          TEXT    NOT NULL,
+    -- The frozen comparison configuration this run executed under, if any.
+    -- Attempts recorded under different manifest hashes are different
+    -- experiments and are never pooled.
+    experiment_name   TEXT    NOT NULL DEFAULT '',
+    experiment_hash   TEXT    NOT NULL DEFAULT '',
+
     label             TEXT    NOT NULL DEFAULT '',
     notes             TEXT    NOT NULL DEFAULT ''
 );
@@ -291,6 +297,7 @@ WHEN OLD.run_uid          IS NOT NEW.run_uid
   OR OLD.isolation_active  IS NOT NEW.isolation_active
   OR OLD.publishable       IS NOT NEW.publishable
   OR OLD.network_policy    IS NOT NEW.network_policy
+  OR OLD.experiment_hash   IS NOT NEW.experiment_hash
 BEGIN
     SELECT RAISE(ABORT, 'run provenance is immutable; only finished_at/status/notes may change');
 END;
@@ -314,6 +321,8 @@ SELECT
     r.isolation_active,
     r.publishable,
     r.network_policy,
+    r.experiment_name,
+    r.experiment_hash,
     a.task_id,
     t.category,
     t.difficulty,

@@ -192,6 +192,8 @@ class ResultsStore:
         isolation_active: bool = False,
         publishable: bool = False,
         network_policy: str = "unknown",
+        experiment_name: str = "",
+        experiment_hash: str = "",
         run_kind: str = "measurement",
         label: str = "",
         notes: str = "",
@@ -207,8 +209,9 @@ class ResultsStore:
                 isolation_backend, isolation_version, isolation_active, publishable,
                 network_policy,
                 adapter_version, harness_version, protocol_version, attempts_per_task,
-                git_commit, git_dirty, python_version, platform, label, notes
-            ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                git_commit, git_dirty, python_version, platform,
+                experiment_name, experiment_hash, label, notes
+            ) VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_uid,
@@ -233,6 +236,8 @@ class ResultsStore:
                 1 if dirty else 0,
                 sys.version.split()[0],
                 platform.platform(),
+                experiment_name,
+                experiment_hash,
                 label,
                 notes,
             ),
@@ -313,6 +318,21 @@ class ResultsStore:
             "INSERT INTO attempt_tests (attempt_id, test_id, outcome, baseline_satisfied, is_hidden) "
             "VALUES (?, ?, ?, ?, ?)",
             [(attempt_id, *row) for row in rows],
+        )
+        self.connection.commit()
+
+    def record_resolved_model(self, run_id: int, model: str) -> None:
+        """Record the model the agent actually reported, if it reported one.
+
+        Written once, only from agent telemetry. It is never inferred: a run
+        whose agent reports nothing keeps NULL here, and a write-up must then
+        say "model as requested, not confirmed by the agent".
+        """
+        if not model:
+            return
+        self.connection.execute(
+            "UPDATE runs SET model_resolved = ? WHERE id = ? AND model_resolved IS NULL",
+            (model, run_id),
         )
         self.connection.commit()
 
