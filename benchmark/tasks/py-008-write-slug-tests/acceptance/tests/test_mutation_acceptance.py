@@ -6,6 +6,7 @@ against deliberately mutated implementations and must catch every one.
 """
 
 import importlib
+import io
 import sys
 import textwrap
 import types
@@ -107,8 +108,13 @@ def _load_agent_suite():
 
 
 def _run_agent_suite():
+    """Run the agent's suite quietly.
+
+    The output is captured rather than sent to /dev/null: an unclosed handle
+    would emit a ResourceWarning into the outer runner's own output stream.
+    """
     suite = _load_agent_suite()
-    return unittest.TextTestRunner(stream=open("/dev/null", "w"), verbosity=0).run(suite)
+    return unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 
 
 class AgentTestSuiteTest(unittest.TestCase):

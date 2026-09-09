@@ -53,6 +53,82 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(self.result.total, 5)
 
 
+class InterleavedOutputTest(unittest.TestCase):
+    """A test that prints lands between its header and its outcome."""
+
+    NOISY = """\
+test_a (tests.t.T.test_a) ... ok
+test_b (tests.t.T.test_b) ... /path/x.py:171: ResourceWarning: unclosed file
+  self._assert_caught("x")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_c (tests.t.T.test_c) ... FAIL
+
+Ran 3 tests in 0.274s
+"""
+
+    def setUp(self):
+        self.result = parse_unittest_output(self.NOISY)
+
+    def test_split_outcome_is_stitched_back(self):
+        self.assertEqual(self.result.total, 3)
+        self.assertTrue(self.result.parse_is_complete)
+
+    def test_the_noisy_test_keeps_its_outcome(self):
+        outcomes = {t.test_id: t.outcome for t in self.result.tests}
+        self.assertEqual(outcomes["tests.t.T.test_b"], TestOutcome.PASSED)
+
+    def test_noise_lines_do_not_become_tests(self):
+        self.assertEqual(len({t.test_id for t in self.result.tests}), 3)
+
+
+class DocstringFormatTest(unittest.TestCase):
+    """unittest prints a documented test across two lines."""
+
+    TEXT = """\
+test_documented (mod.T.test_documented)
+This one has a docstring. ... ok
+test_plain (mod.T.test_plain) ... ok
+test_failing_doc (mod.T.test_failing_doc)
+Another description. ... FAIL
+
+Ran 3 tests in 0.001s
+"""
+
+    def setUp(self):
+        self.result = parse_unittest_output(self.TEXT)
+
+    def test_documented_tests_are_counted(self):
+        self.assertEqual(self.result.total, 3)
+        self.assertTrue(self.result.parse_is_complete)
+
+    def test_documented_test_keeps_its_identity(self):
+        self.assertIn("mod.T.test_documented", {t.test_id for t in self.result.tests})
+
+    def test_documented_failure_is_recorded(self):
+        outcomes = {t.test_id: t.outcome for t in self.result.tests}
+        self.assertEqual(outcomes["mod.T.test_failing_doc"], TestOutcome.FAILED)
+
+    def test_a_stray_ellipsis_line_invents_nothing(self):
+        """Only a line following an open header may supply an outcome."""
+        text = "Loading fixtures ... ok\n\nRan 0 tests in 0.0s\n"
+        self.assertEqual(parse_unittest_output(text).total, 0)
+
+
+class EffectiveTotalTest(unittest.TestCase):
+    """An incomplete parse must never shrink the denominator."""
+
+    def test_effective_total_uses_the_runner_count(self):
+        text = "test_a (tests.t.T.test_a) ... ok\n\nRan 9 tests in 0.1s\n"
+        result = parse_unittest_output(text)
+        self.assertEqual(result.total, 1)
+        self.assertEqual(result.effective_total, 9)
+
+    def test_effective_total_matches_when_complete(self):
+        text = "test_a (tests.t.T.test_a) ... ok\n\nRan 1 test in 0.1s\n"
+        self.assertEqual(parse_unittest_output(text).effective_total, 1)
+
+
 class EdgeCaseTest(unittest.TestCase):
     def test_empty_output_is_a_collection_error(self):
         result = parse_unittest_output("")

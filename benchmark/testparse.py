@@ -29,11 +29,21 @@ SATISFIED = frozenset({TestOutcome.PASSED, TestOutcome.EXPECTED_FAILURE})
 #   test_merge (tests.test_x.MergeTest.test_merge) ... ok
 #   test_merge (tests.test_x.MergeTest.test_merge) ... FAIL
 #   test_merge (tests.test_x.MergeTest) ... skipped 'reason'
-_LINE = re.compile(
-    r"^(?P<name>[\w.]+ \([\w.]+\)(?: \([^)]*\))?)"
-    r"(?: \.\.\. |\s*\.\.\.\s*)"
-    r"(?P<outcome>ok|FAIL|ERROR|skipped.*|expected failure|unexpected success)\s*$"
-)
+#
+# Two things split a test across lines, and missing either silently under-counts
+# the suite:
+#   * a docstring -- unittest prints the name, then "<description> ... ok" below;
+#   * anything the test itself writes, which lands between header and outcome.
+# Headers and outcomes are therefore matched separately and stitched together.
+_OUTCOME_ALTERNATIVES = r"ok|FAIL|ERROR|skipped.*|expected failure|unexpected success"
+_NAME = r"(?P<name>[\w.]+ \([\w.]+\)(?: \([^)]*\))?)"
+
+_LINE = re.compile(rf"^{_NAME}(?: \.\.\. |\s*\.\.\.\s*)(?P<outcome>{_OUTCOME_ALTERNATIVES})\s*$")
+_HEADER_ONLY = re.compile(rf"^{_NAME}\s*\.\.\.\s*(?P<trailing>.*)$")
+_NAME_ONLY = re.compile(rf"^{_NAME}\s*$")
+_BARE_OUTCOME = re.compile(rf"^(?P<outcome>{_OUTCOME_ALTERNATIVES})\s*$")
+#: A docstring line: "<short description> ... ok".
+_DESCRIBED_OUTCOME = re.compile(rf"^.*\.\.\.\s*(?P<outcome>{_OUTCOME_ALTERNATIVES})\s*$")
 
 _OUTCOMES = {
     "ok": TestOutcome.PASSED,
@@ -87,6 +97,16 @@ class SuiteResult:
         """Whether every test unittest claims to have run was also parsed."""
         return self.reported_total is None or self.reported_total == self.total
 
+    @property
+    def effective_total(self) -> int:
+        """The denominator to report.
+
+        When the parse missed outcomes, the runner's own count is the honest
+        denominator: reporting only what we could parse would silently shrink
+        the suite and inflate the pass fraction.
+        """
+        return max(self.total, self.reported_total or 0)
+
     def satisfied_ids(self) -> frozenset[str]:
         return frozenset(test.test_id for test in self.tests if test.satisfied)
 
@@ -105,22 +125,47 @@ def _normalise(raw_name: str) -> str:
     return raw_name.strip()
 
 
+def _to_outcome(raw: str) -> TestOutcome | None:
+    return TestOutcome.SKIPPED if raw.startswith("skipped") else _OUTCOMES.get(raw)
+
+
 def parse_unittest_output(text: str) -> SuiteResult:
     """Parse ``python -m unittest -v`` output into per-test outcomes."""
     results: list[TestResult] = []
+    pending: str | None = None
+
     for line in text.splitlines():
-        match = _LINE.match(line.strip())
-        if match is None:
+        stripped = line.strip()
+
+        match = _LINE.match(stripped)
+        if match is not None:
+            outcome = _to_outcome(match.group("outcome"))
+            if outcome is not None:
+                results.append(TestResult(_normalise(match.group("name")), outcome))
+                pending = None
             continue
-        raw_outcome = match.group("outcome")
-        outcome = (
-            TestOutcome.SKIPPED
-            if raw_outcome.startswith("skipped")
-            else _OUTCOMES.get(raw_outcome)
-        )
-        if outcome is None:
+
+        header = _HEADER_ONLY.match(stripped)
+        if header is not None:
+            # The outcome will arrive after whatever the test itself printed.
+            pending = _normalise(header.group("name"))
             continue
-        results.append(TestResult(test_id=_normalise(match.group("name")), outcome=outcome))
+
+        name_only = _NAME_ONLY.match(stripped)
+        if name_only is not None:
+            # A documented test: its description and outcome are on the next line.
+            pending = _normalise(name_only.group("name"))
+            continue
+
+        if pending is not None:
+            # Only consulted while a header is open, so an arbitrary line ending
+            # in "... ok" elsewhere in the output cannot invent a result.
+            match = _BARE_OUTCOME.match(stripped) or _DESCRIBED_OUTCOME.match(stripped)
+            if match is not None:
+                outcome = _to_outcome(match.group("outcome"))
+                if outcome is not None:
+                    results.append(TestResult(pending, outcome))
+                    pending = None
 
     summary = _SUMMARY.search(text)
     reported = int(summary.group("count")) if summary else None

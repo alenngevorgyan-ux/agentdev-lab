@@ -76,7 +76,18 @@ class AttemptResult:
 
     @property
     def tests_total(self) -> int:
-        return self.suite.total if self.suite else 0
+        return self.suite.effective_total if self.suite else 0
+
+    @property
+    def parse_note(self) -> str:
+        """A note when per-test parsing was incomplete, so metrics stay honest."""
+        if self.suite is None or self.suite.parse_is_complete:
+            return ""
+        return (
+            f"incomplete per-test parse: {self.suite.total} of "
+            f"{self.suite.reported_total} outcomes recovered; per-test rows and "
+            "regression detection are partial for this attempt"
+        )
 
     @property
     def tests_passed(self) -> int:
@@ -293,7 +304,7 @@ def _persist(store: ResultsStore, run_id: int, task: Task, result: AttemptResult
         protected_hash_after=result.protected_hash_after,
         workspace_hash_before=result.workspace_hash_before,
         workspace_hash_after=result.workspace_hash_after,
-        notes="",
+        notes=result.parse_note,
     )
 
     if result.suite is not None:

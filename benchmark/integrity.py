@@ -192,6 +192,20 @@ def check_recorded_results(store: ResultsStore) -> CheckReport:
         ),
     )
 
+    partial = store.query(
+        "SELECT COUNT(*) AS n FROM attempts WHERE notes LIKE 'incomplete per-test parse%'"
+    )[0]["n"]
+    # A partially parsed suite still has a valid pass/fail, but its per-test
+    # metrics understate the truth -- so it is surfaced rather than averaged in.
+    report.add(
+        "per-test results were fully parsed",
+        partial == 0,
+        ""
+        if partial == 0
+        else f"{partial} attempt(s) have partial per-test data; their regression counts "
+        "and pass fractions are lower bounds, not measurements",
+    )
+
     samples = store.query(
         "SELECT COUNT(*) AS n FROM attempts a JOIN runs r ON r.id = a.run_id "
         "WHERE r.run_kind = 'development_sample'"

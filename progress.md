@@ -264,27 +264,48 @@ Three, all found by the controls or the new tests rather than by inspection:
    widening a scope someone had deliberately narrowed — which could have folded
    synthetic rows back into a real measurement. Now seeded only for a new
    database.
+4. **The per-test parser silently under-counted suites.** `unittest -v` prints a
+   documented test across two lines (name, then "description ... ok"), and a
+   test that writes to stderr has its outcome pushed below its header. Both were
+   dropped, so `py-008` recorded "3/3" for a ten-test suite — a fabricated
+   metric, even though the pass/fail itself was right. The parser now stitches
+   split records; an incomplete parse falls back to the runner's own count as
+   the denominator (never inflating the pass fraction), annotates the attempt,
+   and is surfaced by a new integrity check. That check is what found the
+   remaining eight affected attempts.
+
+   Also fixed the `py-008` fixture, which leaked a `/dev/null` handle and emitted
+   a ResourceWarning into the graded output stream.
 
 ### Authoritative commands — actual output
 
 ```
 $ python3 -m unittest discover -s tests -t . -q
-Ran 212 tests in 186.473s
+Ran 221 tests in 161.575s
 OK
 
 $ python3 -m benchmark selfcheck
 74/74 checks passed
 
 $ python3 -m benchmark verify-integrity
-7/7 checks passed
+8/8 checks passed
 ```
+
+Clean-install check: a fresh `git clone` into an empty directory, then
+`./setup.sh --sample`, reproduces all of the above, executes all 24 queries with
+non-empty results, renders the dashboard and writes a CSV export.
 
 ### Control runs over the full suite (harness validation, not agent results)
 
 | Adapter | run_uid | Tasks | Passed | Pass rate |
 | --- | --- | --- | --- | --- |
-| `noop` | `6605023f975648ca` | 18 | 0 | 0.0% |
-| `oracle` | `c855465307c544aa` | 18 | 18 | 100.0% |
+| `noop` | `5f3aeecea000462b` | 18 | 0 | 0.0% |
+| `oracle` | `c4f0441acd1a4811` | 18 | 18 | 100.0% |
+
+The local results database was regenerated after the parser fix: the change
+altered a task fixture and the per-test counts, so the earlier rows described a
+different apparatus. It held only controls and synthetic samples — no
+measurement has ever been deleted, and none exists to delete.
 
 Both bounds hold across all eighteen tasks: nothing passes without work, and
 everything passes with the reference solution.
