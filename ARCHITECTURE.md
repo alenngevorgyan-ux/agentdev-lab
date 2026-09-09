@@ -10,17 +10,21 @@ One **attempt** is one (task, agent) pair executed once. Its protocol is fixed:
 
 ```
 create sandbox from pinned fixture
+  evaluate a pristine copy          -> baseline: which tests passed before any work
   digest protected paths            -> before
   agent's turn                      -> AgentOutcome (ran / did not run)
-  digest protected paths            -> after
+  digest protected paths            -> after;  diff vs the fixture
   if before == after and agent ran:
-      run the task's verification command
-  score(before, after, agent, verification)
-  append immutable row + captured logs
+      overlay the hidden acceptance tests
+      run the task's evaluation command, parse per-test outcomes
+      regressions = baseline satisfied - now satisfied
+  score(tamper, agent, timeout, regressions, exit code)
+  classify the failure from recorded evidence
+  append immutable row + per-test rows + captured logs
 destroy sandbox
 ```
 
-Three properties follow directly from that ordering.
+Four properties follow directly from that ordering.
 
 **The agent cannot grade itself.** `AgentOutcome` carries `completed`, which
 answers "did the process run to completion" — not "did it succeed". Success is
@@ -32,6 +36,15 @@ before and after the agent's turn. Any difference — an edited assertion, a
 because there is nothing left worth measuring. `tampered` can never be a pass:
 the invariant is enforced in the `Score` dataclass, again in a `CHECK`
 constraint, and again in the reporting views.
+
+**Hidden tests cannot be fitted to.** The acceptance overlay lands only after the
+agent's turn, so the assertions an attempt is graded on were never present in the
+workspace it read. Fourteen of the eighteen tasks use one.
+
+**Breaking working code is provable.** Without the baseline in step 2, "the agent
+broke something" is unfalsifiable: a failing test might have been failing all
+along. With it, a regression is a set difference, and it demotes the attempt even
+when the acceptance command exits 0.
 
 **Results are comparable or visibly not.** Every attempt stores a fingerprint
 of the task spec *and* its fixture tree at run time. Editing a task changes the
@@ -50,6 +63,13 @@ across two different experiments.
 | `storage.py` | Append-only SQLite persistence. | Results are a laboratory notebook. There is deliberately no update or delete path for an attempt. |
 | `runner.py` | The protocol above. | Keeps ordering in one readable place; an adapter crash becomes an agent error, never a silent skip. |
 | `integrity.py` | Self-validation and record auditing. | The checks that turn a number into evidence. |
+| `testparse.py` | Per-test outcomes from verbose `unittest` output. | An exit code cannot express partial credit or identify which test regressed. |
+| `diffstats.py` | Files and lines changed against the fixture. | Separates a two-line fix from a rewrite, which pass/fail hides. |
+| `failures.py` | The taxonomy and its evidence-based classifier. | Turns "it failed" into an actionable finding, while refusing to guess. |
+| `queries.py` | Discovery and execution of the curated SQL. | The `.sql` files are what run; there is no query builder that could differ from them. |
+| `export.py` | JSON and CSV export with provenance. | Analysis should not require this repository. |
+| `dashboard.py` | A local page rendered from the curated queries. | The dashboard performs no arithmetic of its own. |
+| `sampledata.py` | Clearly-labelled synthetic rows. | Lets the analytics be built and reviewed before real runs exist, without ever passing as evidence. |
 | `report.py` | Rendering over stored rows only. | Reports can restate the record; they can never compute a new one. |
 | `adapters/` | Agents under test and controls. | The only place that knows how to drive a specific agent. |
 
@@ -82,6 +102,19 @@ two reporting views. The constraints carry real weight:
 Harness errors (our bugs: an IO failure, a missing fixture) are recorded as
 `harness_error` and **excluded from the denominator** of a pass rate. Counting
 our own failure as the agent's failure would be as dishonest as the reverse.
+
+## 4a. Scope, stored in the database
+
+Analyses do not hardcode which rows they may count. They read `analysis_scope`, a
+one-column table listing the run kinds currently in scope, defaulting to real
+measurements only. Widening it to include controls or synthetic rows is a
+deliberate act that is itself persisted, so a later reader can see exactly what
+any number was permitted to count — and both the CLI and the dashboard announce
+it in words when synthetic rows are included.
+
+The alternative, a `WHERE run_kind = 'measurement'` in each file, would have been
+invisible to anyone running the queries through `sqlite3` and impossible to widen
+without editing 24 files.
 
 ## 5. Deliberate constraints
 

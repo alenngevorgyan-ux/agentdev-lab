@@ -3,7 +3,7 @@
 from decimal import Decimal
 
 from .money import round_money
-from .pricing import line_total, subtotal
+from .pricing import subtotal
 
 HUNDRED = Decimal("100")
 

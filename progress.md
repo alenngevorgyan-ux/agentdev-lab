@@ -40,16 +40,16 @@ and export.
 
 | # | Milestone | Definition of done | Status |
 | --- | --- | --- | --- |
-| N1 | Metrics model v2 | Per-test results, regressions, diff stats, tool calls, cost, failure category, agent/model split, run kinds. Protocol version 2. | planned |
-| N2 | Hidden acceptance tests | `acceptance/` overlay applied only after the agent's turn; the agent never sees the tests it is graded on. | planned |
-| N3 | Baseline + regression detection | Pristine baseline evaluated per attempt; a test that passed before and fails after is a recorded regression. | planned |
-| N4 | Failure taxonomy | 12-category taxonomy with an evidence-based classifier, honestly labelled as heuristic. | planned |
-| N5 | Task suite 15-25 | Realistic multi-file tasks across all twelve capability categories. | planned |
-| N6 | SQL analytics | 20+ documented queries: GROUP BY, JOIN, CTE, CASE, window functions, ranking, comparative analysis. | planned |
-| N7 | Export | JSON and CSV export of runs, attempts, per-test results. | planned |
-| N8 | Dashboard | Zero-dependency local dashboard: headline metrics, agent comparison, category/difficulty breakdowns, latency distribution, failure taxonomy, run explorer. | planned |
-| N9 | Sample development data | Synthetic runs, unmistakably labelled, so the analytics stack is reviewable before real agent runs exist. | planned |
-| N10 | Setup + final pass | One init command, clean-install check, full suite, every query verified, honest limitations. | planned |
+| N1 | Metrics model v2 | Per-test results, regressions, diff stats, tool calls, cost, failure category, agent/model split, run kinds. Protocol version 2. | **done** |
+| N2 | Hidden acceptance tests | `acceptance/` overlay applied only after the agent's turn; the agent never sees the tests it is graded on. | **done** |
+| N3 | Baseline + regression detection | Pristine baseline evaluated per attempt; a test that passed before and fails after is a recorded regression. | **done** |
+| N4 | Failure taxonomy | 12-category taxonomy with an evidence-based classifier, honestly labelled as heuristic. | **done** |
+| N5 | Task suite 15-25 | Realistic multi-file tasks across all twelve capability categories. | **done** |
+| N6 | SQL analytics | 20+ documented queries: GROUP BY, JOIN, CTE, CASE, window functions, ranking, comparative analysis. | **done** |
+| N7 | Export | JSON and CSV export of runs, attempts, per-test results. | **done** |
+| N8 | Dashboard | Zero-dependency local dashboard: headline metrics, agent comparison, category/difficulty breakdowns, latency distribution, failure taxonomy, run explorer. | **done** |
+| N9 | Sample development data | Synthetic runs, unmistakably labelled, so the analytics stack is reviewable before real agent runs exist. | **done** |
+| N10 | Setup + final pass | One init command, clean-install check, full suite, every query verified, honest limitations. | **done** |
 
 ---
 
@@ -223,3 +223,87 @@ python3 -m benchmark run --adapter claude-code --task py-001-interval-merge
 
 Confirm the attempt actually changes the workspace before spending a full
 multi-attempt baseline run (M7).
+
+---
+
+## 2026-09-09 — Session 3: from harness to research instrument
+
+### Built
+
+**Metrics model v2** (protocol version 2). Hidden acceptance tests as an
+`acceptance/` overlay applied only after the agent's turn. A per-task baseline
+evaluation of the pristine fixture, making regressions provable rather than
+asserted. Per-test outcomes parsed from verbose `unittest` output into
+`attempt_tests`. Diff statistics against the fixture. A twelve-category failure
+taxonomy with an evidence-based classifier that returns `unclassified` rather
+than guessing, and stores whether a label came from the machine or a human.
+
+**Task suite: 4 -> 18**, covering all twelve capability categories. Fourteen
+grade against hidden tests. Highlights: `py-008` is graded by **mutation
+testing** (the agent's test suite must catch six deliberately broken
+implementations); `py-011` adds cache TTL over a suite with 23 already-passing
+tests, so regressions are detectable; `py-013` hides a data-loss bug in a
+sixteen-stage pipeline; `py-014` enforces a layering rule on the import graph.
+
+**Analytics.** 24 documented SQL analyses; an `analysis_scope` table so what a
+number was allowed to count is itself stored; a zero-dependency dashboard;
+JSON/CSV export carrying provenance and caveats; clearly-labelled synthetic
+development data; `setup.sh`.
+
+### Defects the instrument caught in itself
+
+Three, all found by the controls or the new tests rather than by inspection:
+
+1. `py-007`'s prompt specified `multiplier ** (n - 1)` while its tests required
+   `(n - 2)`. A task whose prompt contradicts its tests measures prompt
+   inconsistency, not capability. Prompt corrected.
+2. `py-012`'s API-respect test forbade the substring `_tokens` anywhere, and so
+   failed a correct solution for naming its own attribute. Replaced with an AST
+   check for private access *on the bus object*.
+3. Reopening the results database re-seeded the default analysis scope, silently
+   widening a scope someone had deliberately narrowed — which could have folded
+   synthetic rows back into a real measurement. Now seeded only for a new
+   database.
+
+### Authoritative commands — actual output
+
+```
+$ python3 -m unittest discover -s tests -t . -q
+Ran 212 tests in 186.473s
+OK
+
+$ python3 -m benchmark selfcheck
+74/74 checks passed
+
+$ python3 -m benchmark verify-integrity
+7/7 checks passed
+```
+
+### Control runs over the full suite (harness validation, not agent results)
+
+| Adapter | run_uid | Tasks | Passed | Pass rate |
+| --- | --- | --- | --- | --- |
+| `noop` | `6605023f975648ca` | 18 | 0 | 0.0% |
+| `oracle` | `c855465307c544aa` | 18 | 18 | 100.0% |
+
+Both bounds hold across all eighteen tasks: nothing passes without work, and
+everything passes with the reference solution.
+
+### Still true, and stated plainly
+
+**No agent has been measured.** The leaderboard contains two controls and two
+synthetic sample agents, and every surface that shows them says so. Unblocking
+M7 needs `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` in the environment
+running the harness.
+
+### Next step
+
+With a credential exported:
+
+```bash
+python3 -m benchmark run --adapter claude-code --agent claude-code \
+    --model claude-opus-5 --task py-001-interval-merge
+```
+
+Confirm the attempt actually changes the workspace and that `verify-integrity`
+stays clean, then run the full suite at `--attempts 5` for a baseline (M7).

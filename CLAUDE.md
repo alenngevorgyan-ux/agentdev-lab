@@ -40,6 +40,10 @@ Key invariants:
 - **Tamper detection outranks everything.** `protected_hash_before !=
   protected_hash_after` yields `tampered`, which is never a pass, even if the
   tests then went green.
+- **Hidden acceptance tests land only after the agent's turn.** The agent is
+  never shown the assertions it is graded on.
+- **A regression demotes an attempt** whatever the exit code said, and can never
+  coexist with a pass.
 - **Results are append-only**, enforced by SQLite triggers, not by etiquette.
 - **Every result carries provenance**: harness version, protocol version, git
   commit, dirty flag, Python version, platform, and a fingerprint of the task
@@ -58,16 +62,24 @@ benchmark/
   sandbox.py         per-attempt isolated workspaces
   execution.py       subprocess with timeout, minimal env, bounded capture
   scoring.py         Status enum + the only place an outcome is decided
+  testparse.py       per-test outcomes parsed from verbose unittest output
+  diffstats.py       files/lines changed against the pinned fixture
+  failures.py        the failure taxonomy and its evidence-based classifier
   storage.py         SQLite persistence (append-only)
   runner.py          the attempt/run protocol above
   integrity.py       selfcheck + recorded-results audit
+  queries.py         discovery/execution of the curated SQL
+  export.py          JSON + CSV export with provenance
+  dashboard.py       zero-dependency local dashboard
+  sampledata.py      clearly-labelled synthetic development rows
   report.py          rendering over stored rows only
   cli.py             `python3 -m benchmark ...`
   adapters/          noop (control), oracle (control), claude_code (under test)
   tasks/<task-id>/   task.json + workspace/ + solution/
 sql/
   schema.sql         results schema, constraints, append-only triggers, views
-  queries/           standalone analysis queries
+  queries/           24 curated analyses (see sql/README.md)
+setup.sh             one-command environment check + every authoritative suite
 tests/               the harness's own suite (stdlib unittest)
 docs/                task format, adapter contract, integrity, methodology
 tests.json           authoritative test commands
@@ -94,6 +106,8 @@ Environment overrides (all optional):
 | `AGENTDEV_CLAUDE_MODEL` | Model passed to that adapter. |
 | `AGENTDEV_AGENT_TIMEOUT_SEC` | Per-attempt agent timeout (default 900). |
 
+Useful commands beyond `run`: `sql`, `dashboard`, `export`, `seed-sample`.
+
 ## 5. Authoritative test commands
 
 Defined in `tests.json` and run **verbatim**. All three must exit 0 before any
@@ -112,6 +126,19 @@ breaks either direction measures nothing.
 ## 6. Experimental integrity rules
 
 These are not style preferences. Violating one invalidates the project.
+
+### 6.0 Synthetic sample data is not evidence
+
+`benchmark seed-sample` writes rows with `run_kind = 'development_sample'` and
+agent names prefixed `sample-`. They exist so the SQL and dashboard can be built
+before real runs exist.
+
+- **Never** quote a sample number as a measurement, in a commit message, a
+  report, a docstring or a conversation.
+- **Never** widen `analysis_scope` to include them in something presented as a
+  result. The scope is stored in the database precisely so this is visible.
+- The dashboard and CLI both print a banner when samples are in scope. Do not
+  remove it.
 
 ### 6.1 No fabricated benchmark data — ever
 
@@ -138,6 +165,8 @@ These are not style preferences. Violating one invalidates the project.
   rule deliberately.
 - **Never** weaken a check in `benchmark/integrity.py` or a constraint in
   `sql/schema.sql` to get a green run.
+- **Never** hide a hidden acceptance test from grading, or move an assertion out
+  of `acceptance/` because agents keep failing it.
 - **Never** narrow an authoritative command in `tests.json` (fewer tests, a
   subset path, `--failfast` to hide later failures).
 - Deleting a task because agents keep failing it is data suppression. A hard
@@ -180,3 +209,7 @@ generated database.
 - New harness behaviour ships with a test in the same change.
 - New tasks must self-check clean (`noop` fails it, `oracle` passes it) before
   being committed.
+- A new SQL analysis goes in `sql/queries/` with a numbered filename and a
+  leading `-- NN | description` comment; the suite executes every file, so it
+  must run against seeded data.
+- Analyses read `analysis_scope`; never hardcode `run_kind = 'measurement'`.

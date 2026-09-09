@@ -8,28 +8,58 @@
   "suites": [
     {
       "id": "unit",
-      "description": "Full unit + integration suite for the harness.",
-      "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", ".", "-v"],
-      "timeout_sec": 600,
+      "description": "Full unit and integration suite for the harness, including adversarial adapters and execution of every curated SQL analysis.",
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-t",
+        ".",
+        "-v"
+      ],
+      "timeout_sec": 1200,
       "authoritative": true
     },
     {
       "id": "selfcheck",
-      "description": "Harness self-validation: runs the oracle and noop adapters over every registered task and asserts the expected pass/fail polarity.",
-      "command": ["python3", "-m", "benchmark", "selfcheck"],
-      "timeout_sec": 900,
+      "description": "Harness self-validation: runs the noop and oracle controls over every registered task and asserts the expected pass/fail polarity.",
+      "command": [
+        "python3",
+        "-m",
+        "benchmark",
+        "selfcheck"
+      ],
+      "timeout_sec": 1800,
       "authoritative": true
     },
     {
       "id": "integrity",
       "description": "Verifies that no task fixture, protected test file, or stored result has been tampered with.",
-      "command": ["python3", "-m", "benchmark", "verify-integrity"],
+      "command": [
+        "python3",
+        "-m",
+        "benchmark",
+        "verify-integrity"
+      ],
       "timeout_sec": 300,
       "authoritative": true
     }
   ],
   "gate": {
     "description": "A milestone may only be committed when every authoritative suite exits 0.",
-    "required_suites": ["unit", "selfcheck", "integrity"]
+    "required_suites": [
+      "unit",
+      "selfcheck",
+      "integrity"
+    ]
+  },
+  "setup": {
+    "command": [
+      "./setup.sh"
+    ],
+    "description": "Verifies the environment and runs every authoritative suite. No installation required."
   }
 }

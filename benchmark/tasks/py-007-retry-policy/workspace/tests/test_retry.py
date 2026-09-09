@@ -1,4 +1,3 @@
-import random
 import unittest
 
 from src.retry import RetryPolicy, call_with_retry
